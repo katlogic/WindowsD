@@ -19,12 +19,7 @@ static HANDLE ioctl_open()
 		return NULL;
 	return dev;
 }
-static NTSTATUS ioctl_insmod_old(HANDLE dev, PUNICODE_STRING svc)
-{
-	IO_STATUS_BLOCK io;
-	return NtDeviceIoControlFile(dev, NULL, NULL, NULL, &io, IOCTL_INSMOD,
-			svc->Buffer, svc->Length+2, NULL, 0);
-}
+
 static NTSTATUS ioctl_insmod(HANDLE dev, WCHAR *svc)
 {
 	DBG("insmod %S",svc);
