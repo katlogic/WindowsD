@@ -8,30 +8,12 @@
 
 #include "ioctl.c"
 
-static int dump_file(WCHAR *fn, void *buf, int len)
-{
-	void *f = CreateFile(fn, FILE_WRITE_DATA,
-			FILE_SHARE_READ, 0, CREATE_ALWAYS, 0, 0);
-	DWORD got = 0;
-	WriteFile(f, buf, len, &got, NULL);
-	CloseHandle(f);
-	return got == len;
-}
-
 static void *get_res(int id, int *len)
 {
 	HRSRC h = FindResource(NULL, MAKEINTRESOURCE(id), RT_RCDATA);
 	HGLOBAL g = LoadResource(NULL, h);
 	*len = SizeofResource(NULL, h);
 	return LockResource(g);
-}
-
-static int dump_res(WCHAR *fn, int id)
-{
-	int len;
-	void *buf = get_res(id, &len);
-	if (!buf) return 0;
-	return dump_file(fn, buf, len);
 }
 
 static void *get_mod_info()
