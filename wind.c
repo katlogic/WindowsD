@@ -720,15 +720,13 @@ static void fix_boot_drivers()
 			SERVICE_INACTIVE, NULL, 0, &sz,
 			&nserv, NULL, NULL);
 
-	if (!sz) return;
+	if (!sz) goto outclose;
 	buf = malloc(sz);
 
 	if (!EnumServicesStatusEx(scm, SC_ENUM_PROCESS_INFO, SERVICE_DRIVER,
 			SERVICE_INACTIVE, (void*)buf, sz, &sz,
-			&nserv, NULL, NULL)) {
-		free(buf);
-		return;
-	}
+			&nserv, NULL, NULL))
+		goto outfree;
 
 	DBG("got %d services", (int)nserv);
 	for (int i = 0; i < nserv; i++) {
@@ -754,7 +752,9 @@ retry:;
 		CloseServiceHandle(sc);
 	}
 	free(cfg);
+outfree:;
 	free(buf);
+outclose:;
 	CloseServiceHandle(scm);
 }
 
