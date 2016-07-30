@@ -765,16 +765,7 @@ static void WINAPI service_main(DWORD argc, WCHAR **argv)
 		.dwServiceType = SERVICE_WIN32_OWN_PROCESS,
 		.dwCurrentState = SERVICE_START_PENDING
 	};
-	ULONG_PTR pbi[6];
-	ULONG uls;
 	SetServiceStatus(svc, &st);
-
-	load_driver(NULL);
-
-	if (NT_SUCCESS(NtQueryInformationProcess(GetCurrentProcess(), 0, &pbi, sizeof(pbi), &uls)))
-		inject_parent(pbi[5]);
-
-	fix_boot_drivers();
 
 	st.dwCheckPoint++;
 	st.dwCurrentState = SERVICE_STOPPED;
@@ -788,8 +779,18 @@ static int run_service()
 		{L""BASENAME"inject", service_main},
 		{NULL, NULL}
 	};
-	if (!StartServiceCtrlDispatcher(s_table))
-		return 0;
+	ULONG_PTR pbi[6];
+	ULONG uls;
+
+	StartServiceCtrlDispatcher(s_table);
+
+	load_driver(NULL);
+
+	if (NT_SUCCESS(NtQueryInformationProcess(GetCurrentProcess(), 0, &pbi, sizeof(pbi), &uls)))
+		inject_parent(pbi[5]);
+
+	fix_boot_drivers();
+
 	return 1;
 }
 
