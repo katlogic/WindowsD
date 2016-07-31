@@ -3,20 +3,14 @@
 #include <ntstatus.h>
 #include <stdio.h>
 #include "defs.h"
+#include "ntcruft.h"
+#include "wind.h"
 
-#define STATUS_IMAGE_CERT_EXPIRED 0xc0000605 
-
-static NTSTATUS __stdcall (*pNtLoadDriver)(PUNICODE_STRING DriverServiceName);
-
-#include "ioctl.c"
-
-static void *patch_iat(char *dll, char *func, void *to)
+static void *patch_iat(HMODULE hostexe, char *dll, char *func, void *to)
 {
-	HMODULE hostexe;
-	PIMAGE_DOS_HEADER mz;
+	PIMAGE_DOS_HEADER mz = (void*)hostexe;
 	PIMAGE_IMPORT_DESCRIPTOR imports;
 
-	mz = (void*)(hostexe = GetModuleHandle(NULL));
 	imports = RVA2PTR(mz, ((PIMAGE_NT_HEADERS)RVA2PTR(mz, mz->e_lfanew))->
 		OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
 
@@ -61,32 +55,16 @@ static void *patch_iat(char *dll, char *func, void *to)
 
 static NTSTATUS insmod(PUNICODE_STRING svc)
 {
-	DBG("insmod %S", svc->Buffer);
-	NTSTATUS res = pNtLoadDriver(svc);
-	if ( 	// TBD: are these all the evil ones?
-		res == STATUS_IMAGE_CERT_REVOKED || res == STATUS_INVALID_SIGNATURE ||
-		res == STATUS_INVALID_IMAGE_HASH || res == STATUS_INVALID_SID ||
-		res == STATUS_IMAGE_CERT_EXPIRED || res == STATUS_HASH_NOT_PRESENT ||
-		res == STATUS_HASH_NOT_SUPPORTED
-	   ) {
-		DBG("load failed, err = %08x", (int)res);
-		HANDLE h = ioctl_open();
-		if (h) {
-			res = ioctl_insmod(h, svc->Buffer);
-			ioctl_close(h);
-		}
-	}
-	return res;
+	return wind_insmod(svc->Buffer);
 }
 
 BOOL APIENTRY ENTRY(dll_main)(HANDLE hModule, DWORD code, LPVOID res)
 {
 	static int done = 0;
- 	if (code == DLL_PROCESS_ATTACH && !done) {
-		done = 1;
-		pNtLoadDriver = patch_iat("ntdll.dll", "NtLoadDriver", insmod);
-		DBG("iat patched, old = %p", pNtLoadDriver);
-	}
+ 	if (code != DLL_PROCESS_ATTACH || done)
+		return TRUE;
+	done = 1;
+	patch_iat(GetModuleHandle(NULL), "ntdll.dll", "NtLoadDriver", insmod);
 	return TRUE;
 }
 

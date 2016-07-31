@@ -1,4 +1,3 @@
-// universally used macros go here
 // ONLY macros
 
 #define LOADER_ID 10
@@ -13,11 +12,7 @@
 #define BITS "32"
 #endif
 
-#define IO_DEVNAME "WinD"
 #define BASENAME "WinD" BITS
-
-#define IOCTL_SETUP 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_INSMOD 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 #define RTL_STRING(s) ((UNICODE_STRING){sizeof(s)-sizeof((s)[0]),sizeof(s),(s)})
 
@@ -31,18 +26,16 @@
 	"obj.CreateRestorePoint \"%s\", 0, 100\nWScript.Quit 123"
 
 #define SVC_BASE L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\"
-#define APPINIT_BASE L"\\Registry\\Machine\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Windows"
-
 #define LOAD_ATTEMPTS 8
 
 #ifndef NDEBUG
-#ifdef _DRIVER
-#define DBG(x...) DbgPrint("WiND: " x);
+#ifdef _WIND_DRIVER
+#define DBG(x...) DbgPrint("WIND: " x);
 #else
 //#define DBG(x...) { printf("! %s:%d@%s(): ",__FILE__,__LINE__,__func__); printf(x); printf("\n"); }
 #define DBG(x...) {  \
 	char _buf[512]; \
-	sprintf(_buf + sprintf(_buf, "! %s:%d@%s(): ",__FILE__,__LINE__,__func__), x); \
+	sprintf(_buf + sprintf(_buf, "WIND: %s:%d@%s(): ",__FILE__,__LINE__,__func__), x); \
 	strcat(_buf, "\n"); \
 	OutputDebugStringA(_buf); \
 }
@@ -50,3 +43,6 @@
 #else
 #define DBG(x...)
 #endif
+
+#define RTL_QUERY_REGISTRY_TYPECHECK 0x00000100
+#define RTL_QUERY_REGISTRY_TYPECHECK_SHIFT 24

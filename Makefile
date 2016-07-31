@@ -39,18 +39,18 @@ $(TGT): $(TGT).exe
 	windres $< $@
 
 
-$(TGT).exe : wind.c manifest.xml loader$(BITS).o $(TGT)-dll.o $(TGT)-sys.o defs.h ioctl.c
+$(TGT).exe : wind.c manifest.xml loader$(BITS).o $(TGT)-dll.o $(TGT)-sys.o defs.h wind.h
 	echo -e "1 24 manifest.xml" | windres -o manifest.o
 	$(CC) -DVERSTR=\"$(VERSTR)\" wind.c manifest.o loader$(BITS).o $(TGT)-dll.o $(TGT)-sys.o -o $@ $(FFLAGS) $(CFLAGS) $(LIBS) $(LDFLAGS)
 	$(STRIP) $@
-$(TGT)-sys.o: driver.c defs.h
+$(TGT)-sys.o: driver.c defs.h wind.h
 	$(CC) -I$(DDK) driver.c -o $(TGT).sys $(FFLAGS) $(CFLAGS) $(SLDFLAGS)
 	# Win 8/10 kernel can't stand debug symbol tables :(
 	cp $(TGT).sys $(TGT)-dbg.sys
 	strip $(TGT).sys
 	$(STRIP) $(TGT).sys
 	echo -e '#include "defs.h"\nSYS_ID RCDATA "$(TGT).sys"' | windres -o $@
-$(TGT)-dll.o: service.c defs.h ioctl.c
+$(TGT)-dll.o: service.c defs.h wind.h
 	$(CC) service.c -o $(TGT).dll $(FFLAGS) $(CFLAGS) $(DLDFLAGS)
 	$(STRIP) $(TGT).dll
 	echo -e '#include "defs.h"\nDLL_ID RCDATA "$(TGT).dll"' | windres -o $@
