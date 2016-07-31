@@ -359,6 +359,7 @@ static HANDLE trigger_loader(WCHAR *svc, WCHAR *ldr)
         void *mod = get_mod_info();
 	ULONG_PTR key = ci_analyze(mod, &cfg);
 
+#ifdef _WIN64
 	struct {
 		UINT64 pad;
 		RTL_QUERY_REGISTRY_TABLE tab[4] ;
