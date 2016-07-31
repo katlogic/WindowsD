@@ -6,8 +6,6 @@
 
 // used to pass initialization
 typedef struct {
-	long 	len;
-	long 	typ;
 	UCHAR 	*ci_opt;
 	UCHAR 	*ci_orig;
 	UCHAR 	ci_guess;  // if ciorigptr is 0, use this guess instead
@@ -35,12 +33,13 @@ typedef struct {
 
 // Open the kernel driver
 #ifndef _WIND_DRIVER
+#define WIND_RTL_STRING(s) ((UNICODE_STRING){sizeof(s)-sizeof((s)[0]),sizeof(s),(s)})
 static HANDLE wind_open()
 {
 	OBJECT_ATTRIBUTES attr = {
 		.Length = sizeof(attr),
 		.Attributes = OBJ_CASE_INSENSITIVE,
-		.ObjectName = &RTL_STRING(L"\\Device\\" WIND_DEVNAME),
+		.ObjectName = &WIND_RTL_STRING(L"\\Device\\" WIND_DEVNAME),
 	};
 	IO_STATUS_BLOCK io;
 	HANDLE dev;

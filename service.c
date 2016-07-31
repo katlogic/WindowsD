@@ -27,8 +27,9 @@ static void *patch_iat(HMODULE hostexe, char *dll, char *func, void *to)
 		t2 = RVA2PTR(mz, imports[i].OriginalFirstThunk);
 
 		for (; t2->u1.Function; t1++, t2++) {
-			void *oldfn, *base;
+			void *oldfn;
 			DWORD oldp;
+			MEMORY_BASIC_INFORMATION vmi;
 
 			if (t2->u1.Ordinal & IMAGE_ORDINAL_FLAG)
 				continue;
@@ -39,13 +40,14 @@ static void *patch_iat(HMODULE hostexe, char *dll, char *func, void *to)
 
 			oldfn = (void*)t1->u1.Function;
 			DBG("oldfn is %p\n",oldfn);
-			base = (void*)(((ULONG_PTR)t1)&(~4095));
-			if (!VirtualProtect(base, 8192, PAGE_EXECUTE_READWRITE, &oldp)) {
+
+			VirtualQuery(t1, &vmi, sizeof(vmi));
+			if (!VirtualProtect(vmi.BaseAddress, vmi.RegionSize, PAGE_READWRITE, &oldp)) {
 				DBG("VirtualProtect failed with %d", (int)GetLastError());
 				return NULL;
 			}
 			t1->u1.Function = (ULONG_PTR)to;
-			VirtualProtect(base, 8192, oldp, &oldp);
+			VirtualProtect(vmi.BaseAddress, vmi.RegionSize, oldp, &oldp);
 			return oldfn;
 		}
 	}
@@ -64,6 +66,7 @@ BOOL APIENTRY ENTRY(dll_main)(HANDLE hModule, DWORD code, LPVOID res)
  	if (code != DLL_PROCESS_ATTACH || done)
 		return TRUE;
 	done = 1;
+	DBG("inside dll!");
 	patch_iat(GetModuleHandle(NULL), "ntdll.dll", "NtLoadDriver", insmod);
 	return TRUE;
 }

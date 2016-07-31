@@ -4,7 +4,7 @@
 #include "defs.h"
 #include "wind.h"
 
-static wind_config_t cfg = { sizeof(cfg) };
+static wind_config_t cfg = {(void*)(-(LONG)sizeof(cfg))};
 static KMUTEX ioctl_mutex;
 
 //
@@ -44,9 +44,9 @@ static void NTAPI image_notify(PUNICODE_STRING filename, HANDLE pid, PIMAGE_INFO
 
 static void ci_restore()
 {
-	DBG("current ci_Options=%08x", *((ULONG*)cfg->ci_opt));
+	DBG("current ci_Options=%08x", *((ULONG*)cfg.ci_opt));
 	cfg.ci_opt[0] = cfg.ci_guess;
-	DBG("now restored ci_Options=%08x", *((ULONG*)cfg->ci_opt));
+	DBG("now restored ci_Options=%08x", *((ULONG*)cfg.ci_opt));
 }
 
 static NTSTATUS driver_sideload(PUNICODE_STRING svc)
@@ -138,7 +138,7 @@ switch (code) {
 		void *proc;
 		if (len != sizeof(*req))
 			goto out;
-		if ((getonly = req->pid < 0))
+		if ((getonly = (req->pid < 0)))
 			req->pid = -req->pid;
 		status = PsLookupProcessByProcessId((HANDLE)(req->pid), (PEPROCESS*)&proc);
 		if (!NT_SUCCESS(status))
@@ -186,16 +186,13 @@ NTSTATUS NTAPI ENTRY(driver_entry)(IN PDRIVER_OBJECT self, IN PUNICODE_STRING re
 		.EntryContext = &cfg,
 		.DefaultType = (REG_BINARY<<RTL_QUERY_REGISTRY_TYPECHECK_SHIFT)
 			|REG_NONE
-	}};
+	},{}};
 
 	status = RtlQueryRegistryValues(0, reg->Buffer, tab, NULL, NULL);
 	if (!NT_SUCCESS(status)) {
 		DBG("registry read failed=%x",(unsigned)status);
 		return status;
 	}
-	if (cfg.len != sizeof(cfg))
-		return STATUS_INVALID_BUFFER_SIZE;
-
 	DBG("initializing driver with:\n"
 		" .ci_opt = %p\n"
 		" .ci_orig = %p\n"

@@ -111,7 +111,7 @@ static int k_analyze(wind_config_t *cfg)
 	FreeLibrary(k);
 	return 0;
 protfound:;
-	cfg->protofs = *((ULONG*)(p+2));
+	cfg->protofs = *((ULONG*)p);
 	FreeLibrary(k);
 	return 1;
 }
@@ -390,6 +390,15 @@ static HANDLE trigger_loader(WCHAR *svc, WCHAR *ldr)
 		goto out;
 
 	k_analyze(&cfg);
+
+	DBG("preparing cfg for driver with:\n"
+		" .ci_opt = %p\n"
+		" .ci_orig = %p\n"
+		" .ci_guess = %02x\n"
+		" .protofs = %x\n"
+		" .protbit = %d\n", cfg.ci_opt, cfg.ci_orig, cfg.ci_guess,
+		cfg.protofs, cfg.protbit);
+
 	RtlWriteRegistryValue(0, svc, L"cfg", REG_BINARY, &cfg, sizeof(cfg));
 
 	RtlInitUnicodeString(&svcu, svc);
@@ -453,7 +462,11 @@ static HANDLE check_driver(int force)
 static int elevate()
 {
 	BOOLEAN old;
-	return NT_SUCCESS(RtlAdjustPrivilege(ID_SeLoadDriverPrivilege, 1, 0, &old));
+	if (!NT_SUCCESS(RtlAdjustPrivilege(ID_SeLoadDriverPrivilege, 1, 0, &old))) {
+		printf("You need to run this command as an Administrator.\n");
+		return 0;
+	}
+	return 1;
 }
 
 static int load_driver(WCHAR *name)
@@ -463,10 +476,8 @@ static int load_driver(WCHAR *name)
 	HANDLE dev;
 	int ret = 0;
 
-	if (!elevate()) {
-		printf("You need to run this command as an Administrator.\n");
+	if (!elevate())
 		return 0;
-	}
 
        	dev = check_driver(0);
 	if (!name) {
@@ -551,10 +562,8 @@ static int do_install()
 
 	DBG("doing install");
 
-	if (!elevate()) {
-		printf("You need to run this command as an Administrator.\n");
+	if (!elevate())
 		return 0;
-	}
 	st = NtUnloadDriver(&RTL_STRING(SVC_BASE BASENAME));
 	(void)st;
 	DBG("Unloading previous driver %x", (int)st);
@@ -574,7 +583,13 @@ static int do_install()
 	DBG("injector=%S",path);
 
 	h = CreateService(scm, L"" BASENAME"inject", L""BASENAME" injector service", SERVICE_ALL_ACCESS,
-		SERVICE_WIN32_OWN_PROCESS, SERVICE_AUTO_START, SERVICE_ERROR_IGNORE,
+		SERVICE_WIN32_OWN_PROCESS,
+#ifdef NDEBUG
+		SERVICE_AUTO_START,
+#else
+		SERVICE_DEMAND_START,
+#endif
+		SERVICE_ERROR_IGNORE,
 		path, L"Base", NULL, NULL, NULL, NULL);
 	if (!h && (GetLastError() == ERROR_SERVICE_EXISTS)) {
 		DBG("svc already exists");
@@ -599,8 +614,11 @@ static int do_install()
 
 static int do_uninstall(int checkonly)
 {
-	HANDLE h, scm = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS);
+	HANDLE h, scm;
 	int ret = 0;
+	if (!elevate() && !checkonly)
+		return 0;
+       	scm = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS);
 	if (!scm) return 0;
 	h = OpenService(scm, L""BASENAME"inject", SERVICE_ALL_ACCESS);
 	if (!h)
@@ -714,7 +732,7 @@ static void WINAPI service_ctl(DWORD code)
 static void inject_parent(int pid)
 {
 	char path[PATH_MAX];
-	HANDLE hp = OpenProcess(PROCESS_ALL_ACCESS,FALSE,pid);
+	HANDLE hthr, hp = OpenProcess(PROCESS_ALL_ACCESS,FALSE,pid);
 	void *lla, *dst;
 	DBG("opened pid=%d handle=%p err=%d",pid,hp,(int)GetLastError());
 	dst = VirtualAllocEx(hp, NULL, 4096, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
@@ -733,7 +751,9 @@ static void inject_parent(int pid)
 		DBG("failed to get LoadLibraryA");
 		goto out;
 	}
-	CreateRemoteThread(hp, NULL, 0, lla, dst, 0, NULL);
+	hthr = CreateRemoteThread(hp, NULL, 0, lla, dst, 0, NULL);
+	WaitForSingleObject(hthr, INFINITE);
+	CloseHandle(hthr);
 out:;
 	CloseHandle(hp);
 }
@@ -813,17 +833,32 @@ static int run_service()
 	};
 	ULONG_PTR pbi[6];
 	ULONG uls;
+	HANDLE dev;
+	int pid;
+	wind_prot_t prot = {0};
 
 	DBG("service launched");
 
 	StartServiceCtrlDispatcher(s_table);
 
-	load_driver(NULL);
-	DBG("sleeping");
-	Sleep(10000);
+	if (!NT_SUCCESS(NtQueryInformationProcess(GetCurrentProcess(), 0, &pbi, sizeof(pbi), &uls)))
+		return 0;
 
-	if (NT_SUCCESS(NtQueryInformationProcess(GetCurrentProcess(), 0, &pbi, sizeof(pbi), &uls)))
-		inject_parent(pbi[5]);
+	pid = pbi[5];
+	prot.pid = pid;
+	dev = check_driver(0);
+	if (!dev)
+		return 0;
+
+	if (!NT_SUCCESS(wind_ioctl(dev, WIND_IOCTL_PROT, &prot, sizeof(prot)))) {
+		wind_close(dev);
+		return 0;
+	}
+
+	inject_parent(pid);
+
+	wind_ioctl(dev, WIND_IOCTL_PROT, &prot, sizeof(prot));
+	wind_close(dev);
 
 	fix_boot_drivers();
 
