@@ -137,7 +137,7 @@ static ULONG_PTR ci_analyze(void *mods, wind_config_t *cfg)
 #ifdef _WIN64
 		if (!memcmp(p-5, "\x48\x83\xc4\x28\xe9",5))
 			goto cipinit_found;
-
+#else
 		// call something; pop ebp; jmp CipInitialize
 		if (p[-1] == 0xe9 && p[-2] == 0x5d && p[-7] == 0xe8)
 			goto cipinit_found;
