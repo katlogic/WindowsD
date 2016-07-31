@@ -25,7 +25,6 @@ SLDFLAGS=$(LDFLAGS) -shared -Wl,-e_driver_entry -Wl,--subsystem=native -nostartf
 VERSTR=v1.0
 
 ifeq ($(DEBUG),)
-#comment the following two for debug
 OPT=-O2 -DNDEBUG
 STRIP=objcopy --strip-all
 else
@@ -46,6 +45,9 @@ $(TGT).exe : wind.c manifest.xml loader$(BITS).o $(TGT)-dll.o $(TGT)-sys.o defs.
 	$(STRIP) $@
 $(TGT)-sys.o: driver.c defs.h
 	$(CC) -I$(DDK) driver.c -o $(TGT).sys $(FFLAGS) $(CFLAGS) $(SLDFLAGS)
+	# Win 8/10 kernel can't stand debug symbol tables :(
+	cp $(TGT).sys $(TGT)-dbg.sys
+	strip $(TGT).sys
 	$(STRIP) $(TGT).sys
 	echo -e '#include "defs.h"\nSYS_ID RCDATA "$(TGT).sys"' | windres -o $@
 $(TGT)-dll.o: service.c defs.h ioctl.c
