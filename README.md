@@ -126,3 +126,29 @@ policy with whatever we want. There are some differences too:
 * We automate `reset ci_Options` -> `load unsigned` -> `ci_Options restore`
   PatchGuard dance by hooking services.exe to use our NtLoadDriver wrapper DLL.
 
+### Building and debugging
+You need MSYS2 for building - https://msys2.github.io/
+
+Once you get that, drop into mingw-w64 shell and:
+
+```
+MINGW64 ~$ pacman -S mingw-w64-i686-gcc mingw-w64-x86_64-gcc
+MINGW64 ~$ git clone https://github.com/katlogic/WindowsD
+MINGW64 ~$ cd WindowsD && make
+```
+
+To build wind32.exe, just launch the "mingw-w64 win32" shell, and:
+
+```
+MINGW32 ~$ cd WindowsD && make clean && make
+```
+
+Cross compiling (on linux, or mingw32 from mingw64) is possible, but you'll have to tweak Makefile on your own.
+
+Finally, to get debug version:
+
+```
+MINGW64 ~/WindowsD$ make DEBUG=1
+```
+
+And you'll see both the userspace exe, dlls and kernel driver tracing heavily into DbgView.
