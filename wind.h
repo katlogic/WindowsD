@@ -1,22 +1,23 @@
 // Public API, standalone header.
-// Depends only on NT dll (see ntcruft.h) and headers.
+// Parent includes:  windows.h, winternl.h
+// Links against ntdll.
 
 // Open \\Device\\WinD
 #define WIND_DEVNAME "WinD"
 
-// used to pass initialization
+// Used to pass initialization.
 typedef struct {
 	UCHAR 	*ci_opt;
 	UCHAR 	*ci_orig;
-	UCHAR 	ci_guess;  // if ciorigptr is 0, use this guess instead
-	int 	protofs;  // _EPROCESS->Flags2 offset on Win7, PS_PROTECTION Win8
-	int 	protbit;  // Flags2->ProtectedProcess bit on Win7, -1 otherwise
+	UCHAR 	ci_guess;  // If ciorigptr is 0, use this guess instead.
+	int 	protofs;   // _EPROCESS->Flags2 offset on Win7, PS_PROTECTION Win8.
+	int 	protbit;   // Flags2->ProtectedProcess bit on Win7, -1 otherwise.
 } wind_config_t;
 
 // Load a driver. Argument is simply the unicode string.
 #define WIND_IOCTL_INSMOD CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
-// Get/set WinTcb process protection
+// Get/set WinTcb process protection.
 #define WIND_IOCTL_PROT   CTL_CODE(FILE_DEVICE_UNKNOWN, 0x900, METHOD_BUFFERED, FILE_ANY_ACCESS)
 typedef struct {
 	char SignatureLevel;
@@ -28,7 +29,7 @@ typedef struct {
 } WIND_PS_PROTECTION;
 typedef struct {
 	LONG_PTR pid; 		// Pid this is for. Negative = get flags only.
-	WIND_PS_PROTECTION prot; // New protection flags. Old flags stored in there.
+	WIND_PS_PROTECTION prot;// New protection flags. Old flags stored in there.
 } wind_prot_t;
 
 // Open the kernel driver
@@ -43,7 +44,9 @@ static HANDLE wind_open()
 	};
 	IO_STATUS_BLOCK io;
 	HANDLE dev;
-
+	BOOLEAN old;
+	extern NTSTATUS NTAPI RtlAdjustPrivilege(ULONG,BOOLEAN,BOOLEAN,PBOOLEAN);
+	RtlAdjustPrivilege(10, 1, 0, &old);
 	NTSTATUS status = NtOpenFile(&dev, FILE_GENERIC_READ, &attr, &io,
 		FILE_SHARE_READ,FILE_NON_DIRECTORY_FILE| FILE_SYNCHRONOUS_IO_NONALERT);
 	if (status == STATUS_NOT_FOUND)
@@ -69,6 +72,7 @@ static NTSTATUS wind_ioctl(HANDLE dev, ULONG num, void *buf, int len)
 // Close driver.
 static NTSTATUS wind_close(HANDLE dev)
 {
+	extern NTSTATUS NTAPI NtClose(HANDLE);
 	if (dev)
 		return NtClose(dev);
 	return 0;
