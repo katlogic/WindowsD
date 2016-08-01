@@ -13,40 +13,11 @@ static KMUTEX ioctl_mutex;
 // We temporarily flip the ci_Options to not validate, load driver, flip
 // ci_options back.
 //
-// BUT. Compared to linux, driver pages can be swapped out to disk on windows.
-// Worse still, windows will sneakily re-verify pages as they get paged back in.
-//
-// Obviously our image would fail as the pages will not validate. What we do
-// is register a callback for image loading. In there, enumerate all driver sections,
-// and lock em in memory via calls to MmLockPagableDataSection -- all the while
-// ci_Options is still zero so that everything can be paged in.
-
-static void lock_driver(void *base)
-{
-	IMAGE_DOS_HEADER *mz = base;
-	IMAGE_NT_HEADERS *pe = base + mz->e_lfanew;
-	IMAGE_SECTION_HEADER *sec = ((void*)pe) + sizeof(IMAGE_NT_HEADERS);
-	DBG("Locking driver @ %p\n", base);
-	for (int i = 0; i < pe->FileHeader.NumberOfSections; i++) {
-		if (sec[i].SizeOfRawData && sec[i].PointerToRawData) {
-			DBG("Locking section %p\n",base + sec[i].VirtualAddress);
-			MmLockPagableDataSection(base + sec[i].VirtualAddress);
-		}
-	}
-}
-
-static void NTAPI image_notify(PUNICODE_STRING filename, HANDLE pid, PIMAGE_INFO pinfo)
-{
-	if (!pinfo->SystemModeImage)
-		return;
-	lock_driver(pinfo->ImageBase);
-}
-
 static void ci_restore()
 {
-	DBG("current ci_Options=%08x", *((ULONG*)cfg.ci_opt));
+	DBG("current ci_Options=%08x\n", *((ULONG*)cfg.ci_opt));
 	cfg.ci_opt[0] = cfg.ci_guess;
-	DBG("now restored ci_Options=%08x", *((ULONG*)cfg.ci_opt));
+	DBG("now restored ci_Options=%08x\n", *((ULONG*)cfg.ci_opt));
 }
 
 static NTSTATUS driver_sideload(PUNICODE_STRING svc)
@@ -54,7 +25,7 @@ static NTSTATUS driver_sideload(PUNICODE_STRING svc)
 	NTSTATUS status;
 
 	// register notifier routine
-	PsSetLoadImageNotifyRoutine(&image_notify);
+	//PsSetLoadImageNotifyRoutine(&image_notify);
 
 	// Clear ci_Options. Daaaaanger zone.
 	cfg.ci_opt[0] = 0;
@@ -66,7 +37,7 @@ static NTSTATUS driver_sideload(PUNICODE_STRING svc)
 	ci_restore();
 
 	// Remove notifier
-	PsRemoveLoadImageNotifyRoutine(&image_notify);
+	//PsRemoveLoadImageNotifyRoutine(&image_notify);
 
 	return status;
 }
@@ -190,7 +161,7 @@ NTSTATUS NTAPI ENTRY(driver_entry)(IN PDRIVER_OBJECT self, IN PUNICODE_STRING re
 
 	status = RtlQueryRegistryValues(0, reg->Buffer, tab, NULL, NULL);
 	if (!NT_SUCCESS(status)) {
-		DBG("registry read failed=%x",(unsigned)status);
+		DBG("registry read failed=%x\n",(unsigned)status);
 		return status;
 	}
 	DBG("initializing driver with:\n"
@@ -214,7 +185,6 @@ NTSTATUS NTAPI ENTRY(driver_entry)(IN PDRIVER_OBJECT self, IN PUNICODE_STRING re
 	}
 
 	// Page ourselves in too, and restore ci_Options.
-	lock_driver(self->DriverStart);
 	if (cfg.ci_orig)
 		cfg.ci_guess = *cfg.ci_orig;
 	ci_restore();
