@@ -6,7 +6,7 @@ mal-features introduced in modern windows versions. Currently, it can disable:
 * Driver signing, including WHQL-only locked systems (secureboot tablets).
 * Protected processes (used for DRM, "WinTcb").
 
-WinD works similiarly to other tools [1] [2] which disable DSE, but is
+WinD works similiarly to [other tools](https://github.com/hfiref0x/DSEFix) which disable DSE, but is
 designed to be more user friendly - that is, be mostly transparent and
 simply unlock the system, with no need for user to further intervene manually.
 
