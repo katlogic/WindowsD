@@ -1,7 +1,7 @@
 ## WindowsD - Fixing broken windows (DSE and WinTcb protection levels)
 
 WinD is a 3rd party "jailberak" so administrators can remove some
-mal-features introduced in modern versions windows. Currently, it can disable:
+mal-features introduced in modern windows versions. Currently, it can disable:
 
 * Driver signing, including WHQL-only locked systems (secureboot tablets).
 * Protected processes (used for DRM, "WinTcb").
