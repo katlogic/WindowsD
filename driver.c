@@ -24,9 +24,6 @@ static NTSTATUS driver_sideload(PUNICODE_STRING svc)
 {
 	NTSTATUS status;
 
-	// register notifier routine
-	//PsSetLoadImageNotifyRoutine(&image_notify);
-
 	// Clear ci_Options. Daaaaanger zone.
 	cfg.ci_opt[0] = 0;
 
@@ -35,9 +32,6 @@ static NTSTATUS driver_sideload(PUNICODE_STRING svc)
 
 	// Restore ci_Options.
 	ci_restore();
-
-	// Remove notifier
-	//PsRemoveLoadImageNotifyRoutine(&image_notify);
 
 	return status;
 }
@@ -184,7 +178,6 @@ NTSTATUS NTAPI ENTRY(driver_entry)(IN PDRIVER_OBJECT self, IN PUNICODE_STRING re
 		return status;
 	}
 
-	// Page ourselves in too, and restore ci_Options.
 	if (cfg.ci_orig)
 		cfg.ci_guess = *cfg.ci_orig;
 	ci_restore();
