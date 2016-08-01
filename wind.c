@@ -133,7 +133,7 @@ static ULONG_PTR ci_analyze(void *mods, wind_config_t *cfg)
 	ULONG_PTR base = get_mod_base(mods, "CI.DLL");
 	ULONG_PTR ci_opt = 0;
 	ULONG_PTR key = 0;
-#if _WIN64
+#ifdef _WIN64
 	MEMORY_BASIC_INFORMATION info;
 #endif
 
@@ -189,7 +189,7 @@ cipinit_found:
 	DBG("ci_Options not found");
 	goto out_free;
 found_ci:
-#if _WIN64
+#ifdef _WIN64
 	// Scratch space we use to stash original ci_Options into
 	if (!VirtualQuery((void*)ci_opt, &info, sizeof(info)))
 		goto out_free;
@@ -740,7 +740,7 @@ static int usage(int interactive)
 " "BASENAME " /I                        install, disable DSE permanently\n"
 " "BASENAME " /U                        uninstall, re-enable DSE permanently\n"
 " "BASENAME " /W                        run interactive installer\n"
-" "BASENAME " /D <pid>                  de-protect speicified PID\n"
+" "BASENAME " /D <pid>                  de-protect specified PID\n"
 " "BASENAME " /L [service|driver.sys]   load unsigned driver and keep DSE status intact\n");
 		goto out;
 	}
