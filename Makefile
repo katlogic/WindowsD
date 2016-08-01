@@ -22,7 +22,7 @@ FFLAGS=-fno-ident -fno-stack-check -fno-stack-protector -mno-stack-arg-probe -fn
 LDFLAGS=-Wl,--enable-stdcall-fixup -nostartfiles -Wl,-e_win_main
 DLDFLAGS=$(LDFLAGS) -shared -Wl,-e_dll_main -nostartfiles -lntdll -nostdlib -lkernel32 -lmsvcrt
 SLDFLAGS=$(LDFLAGS) -shared -Wl,-e_driver_entry -Wl,--subsystem=native -nostartfiles -nostdlib -lntoskrnl
-VERSTR=v1.1
+VERSTR=v1.2
 
 ifeq ($(DEBUG),)
 OPT=-O2 -DNDEBUG

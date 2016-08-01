@@ -89,8 +89,15 @@ static ULONG_PTR guess_ci()
 
 static int k_analyze(wind_config_t *cfg)
 {
-	HMODULE k = LoadLibraryEx(L"NTOSKRNL.EXE",NULL,DONT_RESOLVE_DLL_REFERENCES);
-	BYTE *p = (void*)GetProcAddress(k, "PsGetProcessProtection");
+	DBG("ntoskrnl?");
+	HMODULE k = LoadLibraryEx(L"NTOSKRNL.EXE",NULL,
+			DONT_RESOLVE_DLL_REFERENCES|LOAD_LIBRARY_SEARCH_SYSTEM32);
+	BYTE *p;
+	if (!k) {
+		DBG("ntoskrnl failed?");
+	       	return 0;
+	}
+	p = (void*)GetProcAddress(k, "PsGetProcessProtection");
 	cfg->protbit = -1;
 	cfg->protofs = 0;
 	if (!p) {
@@ -112,13 +119,15 @@ static int k_analyze(wind_config_t *cfg)
 	return 0;
 protfound:;
 	cfg->protofs = *((ULONG*)p);
+	DBG("prot done");
 	FreeLibrary(k);
 	return 1;
 }
 
 static ULONG_PTR ci_analyze(void *mods, wind_config_t *cfg)
 {
-	HMODULE ci = LoadLibraryEx(L"CI.dll",NULL,DONT_RESOLVE_DLL_REFERENCES);
+	HMODULE ci = LoadLibraryEx(L"CI.dll",NULL,
+			DONT_RESOLVE_DLL_REFERENCES|LOAD_LIBRARY_SEARCH_SYSTEM32);
 	BYTE *p = (void*)GetProcAddress(ci, "CiInitialize");
 	ULONG_PTR mod = (ULONG_PTR)ci;
 	ULONG_PTR base = get_mod_base(mods, "CI.DLL");
@@ -197,6 +206,7 @@ found_ci:
 	cfg->ci_opt = (void*)(ci_opt - mod + base);
 out_free:
 	FreeLibrary(ci);
+	DBG("ci done %d",(int)key);
 	return key;
 }
 
