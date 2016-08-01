@@ -135,18 +135,18 @@ static ULONG_PTR ci_analyze(void *mods, wind_config_t *cfg)
 	// find jmp CipInitialize
 	for (int i = 0; i < 100; i++, p++) {
 		// jmp/call forwardnearby
-		if (((p[-1]&0xfe) == 0xe8) && (p[2] == 0) && (p[3] == 0)) {
+		if (((p[-1]&0xfe) == 0xe8) && ((!(p[2]|p[3]))||((p[2]&p[3])==0xff))) {
 			BYTE *t = p + 4 + *((DWORD*)p);
 			DBG("candidate %x %p",p[-1],t);
 			// Don't eat the security cookie
-#if _WIN64
+#ifdef _WIN64
 			// mov rax, [rip+something]
 			if (!memcmp(t, "\x48\x8b\x05",3))
 				continue;
 #else
 			// mov eax, [something]
 			if (t[0] == 0xa1)
-				continue
+				continue;
 #endif
 			goto cipinit_found;
 		}
@@ -166,11 +166,10 @@ cipinit_found:
 			goto found_ci;
 		}
 #else
-		// mov ci_Options, ecx; check the address is within the module
-		if (p[-2] == 0x89 && p[-1] == 0x0d)
+		// mov ci_Options, eax|ecx; call __imp_something
+		if (p[4] == 0xff && p[5] == 0x15)
 		{
-			DWORD dw = *((DWORD*)p);
-			DBG("found mov [%x], ecx", (unsigned)dw);
+			DWORD dw = *((DWORD*)(p+6));
 			if (dw > mod && dw < (mod+1024*1024)) {
 				ci_opt = *(ULONG_PTR*)p;
 				goto found_ci;
@@ -476,6 +475,31 @@ static int elevate()
 	return 1;
 }
 
+static int unprotect(WCHAR *p)
+{
+	NTSTATUS st;
+	HANDLE dev;
+	wind_prot_t prot = {0};
+	if (!elevate())
+		return 0;
+	while (*p == L' ' || *p == L'\t') p++;
+	prot.pid = _wtoi(p);
+	dev = check_driver(0);
+	if (!dev) {
+		printf("Failed to open/install WinD device.\n");
+		return 0;
+	}
+	st = wind_ioctl(dev, WIND_IOCTL_PROT, &prot, sizeof(prot));
+	wind_close(dev);
+	if (!NT_SUCCESS(st)) {
+		printf("Failed to de-protect %d, status %08x\n",
+				(int)prot.pid, (int)st);
+		return 0;
+	}
+	printf("%d is now de-protected.\n",(int)prot.pid);
+	return 1;
+}
+
 static int load_driver(WCHAR *name)
 {
 	WCHAR svc[PATH_MAX];
@@ -701,6 +725,7 @@ static int usage(int interactive)
 " "BASENAME " /I                        install, disable DSE permanently\n"
 " "BASENAME " /U                        uninstall, re-enable DSE permanently\n"
 " "BASENAME " /W                        run interactive installer\n"
+" "BASENAME " /D <pid>                  de-protect speicified PID\n"
 " "BASENAME " /L [service|driver.sys]   load unsigned driver and keep DSE status intact\n");
 		goto out;
 	}
@@ -916,6 +941,10 @@ void ENTRY(win_main)()
 			break;
 		case 'X':
 			ret = !!run_service();
+			break;
+		case 'D':
+			ret = !!unprotect(cmd);
+			break;
 		default:
 			usage(0);
 	}
