@@ -100,10 +100,12 @@ buffer in bytes, including terminating zeros.
 `WIND_IOCTL_PROT` - set/unset process protection. buffer points to `wind_prot_t`
 typed buffer.
 
-`buf->pid` - set to pid you want to change protection flags for.
-`buf->prot` - contents of this struct are copied to process protection flags,
-but original protection flags of process will be returned back in the same
-buffer - ie contents will be swapped.
+* `buf->pid` - set to pid you want to change protection flags for.
+* `buf->prot` - contents of this struct are copied to process protection flags,
+  but original protection flags of process will be returned back in the same
+  buffer - ie contents will be swapped.
+
+To unprotect a process, just clear all its flags - bzero(&buf->prot).
 
 You can re-protect a process after you're done with it, simply by calling the
 ioctl again with same buffer (it holds the original flags) and the `buf->prot`
