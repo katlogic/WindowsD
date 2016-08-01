@@ -7,12 +7,13 @@ mal-features introduced in modern windows versions. Currently, it can disable:
 * Protected processes (used for DRM, "WinTcb").
 
 WinD works similiarly to [other tools](https://github.com/hfiref0x/DSEFix) which disable DSE, but is
-designed to be more user friendly - that is, be mostly transparent and
-simply unlock the system, with no need for user to further intervene manually.
+designed to be more user friendly and support for more OS/hardware combinations.
 
 It is also designed to be "transparent", that is anything probing for
 "integrity" - typically DRM - will still see the system as locked down,
 even if drivers and processes are accessible to system administrator.
+
+The idea is more or less 'run once and forget'.
 
 Only accounts with SeLoadDriverPrivilege (admin) can use it.
 
