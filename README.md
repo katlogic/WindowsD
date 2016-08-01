@@ -117,9 +117,8 @@ policy with whatever we want. There are some differences too:
 
 * Custom signed driver 0day is used.
 * 32bit support (Win8+ secureboot).
-* It can actually coexist with vbox, does not depend on VT support in CPU
-  and it even triggers if the driver is already present as we try to load it
-  under different name.
+* Can coexist with vmware/vbox as the exploit is not based on those (and hence
+  does not need CPU with VT support either).
 * The vulnerable driver is WHQL signed, so it works even on systems restricted
   to WHQL via secureboot env.
 * We automate `reset ci_Options` -> `load unsigned` -> `ci_Options restore`
