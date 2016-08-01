@@ -708,6 +708,11 @@ static int interactive_install()
 	return 1;
 }
 
+static void enter()
+{
+	while (getchar() != '\n') {};
+}
+
 static int usage(int interactive)
 {
 	int doit, installed = is_installed();
@@ -749,12 +754,12 @@ static int usage(int interactive)
 			ret = do_install();
 		}
 		printf("All done! Press enter to close...");
-		getchar();
+		enter();
 		ExitProcess(ret);
 	}
 cancel:;
 	printf("Operation cancelled, press enter to close...");
-	getchar();
+	enter();
 out:;
 	ExitProcess(1);
 }
@@ -949,5 +954,10 @@ void ENTRY(win_main)()
 			usage(0);
 	}
 
+	if (explorer) {
+		printf("Press enter...");
+		enter();
+	}
 	ExitProcess(ret);
 }
+
