@@ -71,8 +71,23 @@ with. Of course this is only a fiat restriction, and we can disable it with:
 ```
 
 Where 1234 is PID of the process you want to unprotect. Once unprotected,
-a debugger can be attached, hooks can be injected etc. Re-protection is not
-supported from command line at this time, you have to use C API for that.
+a debugger can be attached, hooks can be injected etc. This command is
+useful only on Win7 and early win8/10 - later versions use patchguard to
+watch for changes of protection flags.
+
+Meaning you have to employ same trick as we do for loading drivers - reset
+protection, do your stuff, restore protection - and do it quick. This can
+be done only via the C API.
+
+Another route is elevate your own process to WinTcb level (which should not
+register it with PG), at which point it should be possible to fiddle with
+other WinTcb process. For that, you need to get familiar with internal
+encodings of PS_PROTECTION structure. More in-depth description can be
+found at Alex's blog:
+
+* [Protected Processes Part 1: Pass-the-Hash Mitigations in Windows 8.1](http://www.alex-ionescu.com/?p=97)
+* [Protected Processes Part 2: Exploit/Jailbreak Mitigations, Unkillable Processes and Protected Services](ww.alex-ionescu.com/?p=116)
+* [Protected Processes Part 3: Windows PKI Internals (Signing Levels, Scenarios, Root Keys, EKUs & Runtime Signers)](http://www.alex-ionescu.com/?p=146)
 
 ### Bugs
 
