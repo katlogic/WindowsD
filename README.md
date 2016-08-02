@@ -86,7 +86,7 @@ encodings of PS_PROTECTION structure. More in-depth description can be
 found at Alex's blog:
 
 * [Protected Processes Part 1: Pass-the-Hash Mitigations in Windows 8.1](http://www.alex-ionescu.com/?p=97)
-* [Protected Processes Part 2: Exploit/Jailbreak Mitigations, Unkillable Processes and Protected Services](ww.alex-ionescu.com/?p=116)
+* [Protected Processes Part 2: Exploit/Jailbreak Mitigations, Unkillable Processes and Protected Services](http://ww.alex-ionescu.com/?p=116)
 * [Protected Processes Part 3: Windows PKI Internals (Signing Levels, Scenarios, Root Keys, EKUs & Runtime Signers)](http://www.alex-ionescu.com/?p=146)
 
 ### Bugs
