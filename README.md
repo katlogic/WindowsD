@@ -1,6 +1,6 @@
 ## WindowsD - Fixing broken windows (DSE and WinTcb protection levels)
 
-WinD is a party "jailberak" so administrators can remove some
+WinD is a 3rd party "jailberak" so administrators can remove some
 mal-features introduced in modern windows versions. Currently, it can disable:
 
 * Driver signing, including WHQL-only locked systems (secureboot tablets).
@@ -19,10 +19,10 @@ Only accounts with SeLoadDriverPrivilege (admin) can use it.
 
 ### Supported windows versions
 
-Windows 7, 8, 8.1 and 10, 32bit and 64bit on Intel CPUs.
+Almost all builds of Windows 7, 8.1 and 10, 32bit and 64bit on Intel CPUs were tested.
 You need to use specific WinD32/64 .exe according to bit-ness of your system.
 
-Vista and server editions *may* work, but are untested.
+XP64, Vista and server editions *may* work, but you're on your own.
 
 ### Usage
 
