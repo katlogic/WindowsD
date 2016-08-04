@@ -1,6 +1,6 @@
 ## WindowsD - Fixing broken windows (DSE and WinTcb protection levels)
 
-WinD is a 3rd party "jailberak" so administrators can remove some
+WinD is a 3rd party "jailbreak" so administrators can remove some
 mal-features introduced in modern windows versions. Currently, it can disable:
 
 * Driver signing, including WHQL-only locked systems (secureboot tablets).
@@ -132,7 +132,7 @@ Just like DSEfix and things similiar to it, we simply load a signed driver,
 exploit vulnerability in it to gain access to kernel, and override the
 policy with whatever we want. There are some differences too:
 
-* Custom signed driver 0day is used.
+* Custom signed driver exploit is used, [technical details here](http://kat.lua.cz/posts/Some_fun_with_vintage_bugs_and_driver_signing_enforcement/#more)
 * 32bit support (Win8+ secureboot).
 * Can coexist with vmware/vbox as the exploit is not based on those (and hence
   does not need CPU with VT support either).
