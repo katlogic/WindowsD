@@ -756,10 +756,10 @@ static int usage(int interactive)
 
 	if (doit) {
 		int ret;
-		if (installed)
+		if (installed) {
 			printf("Uninstalling...");
 			ret = do_uninstall(0);
-		else {
+		} else {
 			if (!interactive_install())
 				goto cancel;
 			printf("Installing...");
