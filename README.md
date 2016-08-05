@@ -1,6 +1,6 @@
 ## WindowsD - Fixing broken windows (DSE and WinTcb protection levels)
 
-WinD is a 3rd party "jailberak" so administrators can remove some
+WinD is a 3rd party "jailbreak" so administrators can remove some
 mal-features introduced in modern windows versions. Currently, it can disable:
 
 * Driver signing, including WHQL-only locked systems (secureboot tablets).
@@ -19,10 +19,10 @@ Only accounts with SeLoadDriverPrivilege (admin) can use it.
 
 ### Supported windows versions
 
-Windows 7, 8, 8.1 and 10, 32bit and 64bit on Intel CPUs.
+Almost all builds of Windows 7, 8.1 and 10, 32bit and 64bit on Intel CPUs were tested.
 You need to use specific WinD32/64 .exe according to bit-ness of your system.
 
-Vista and server editions *may* work, but are untested.
+XP64, Vista and server editions *may* work, but you're on your own.
 
 ### Usage
 
@@ -71,8 +71,23 @@ with. Of course this is only a fiat restriction, and we can disable it with:
 ```
 
 Where 1234 is PID of the process you want to unprotect. Once unprotected,
-a debugger can be attached, hooks can be injected etc. Re-protection is not
-supported from command line at this time, you have to use C API for that.
+a debugger can be attached, hooks can be injected etc. This command is
+useful only on Win7 and early win8/10 - later versions use patchguard to
+watch for changes of protection flags.
+
+Meaning you have to employ same trick as we do for loading drivers - reset
+protection, do your stuff, restore protection - and do it quick. This can
+be done only via the C API.
+
+Another route is elevate your own process to WinTcb level (which should not
+register it with PG), at which point it should be possible to fiddle with
+other WinTcb process. For that, you need to get familiar with internal
+encodings of PS_PROTECTION structure. More in-depth description can be
+found at Alex's blog:
+
+* [Protected Processes Part 1: Pass-the-Hash Mitigations in Windows 8.1](http://www.alex-ionescu.com/?p=97)
+* [Protected Processes Part 2: Exploit/Jailbreak Mitigations, Unkillable Processes and Protected Services](http://ww.alex-ionescu.com/?p=116)
+* [Protected Processes Part 3: Windows PKI Internals (Signing Levels, Scenarios, Root Keys, EKUs & Runtime Signers)](http://www.alex-ionescu.com/?p=146)
 
 ### Bugs
 
@@ -117,7 +132,7 @@ Just like DSEfix and things similiar to it, we simply load a signed driver,
 exploit vulnerability in it to gain access to kernel, and override the
 policy with whatever we want. There are some differences too:
 
-* Custom signed driver 0day is used.
+* Custom signed driver exploit is used, [technical details here](http://kat.lua.cz/posts/Some_fun_with_vintage_bugs_and_driver_signing_enforcement/#more)
 * 32bit support (Win8+ secureboot).
 * Can coexist with vmware/vbox as the exploit is not based on those (and hence
   does not need CPU with VT support either).
@@ -126,3 +141,29 @@ policy with whatever we want. There are some differences too:
 * We automate `reset ci_Options` -> `load unsigned` -> `ci_Options restore`
   PatchGuard dance by hooking services.exe to use our NtLoadDriver wrapper DLL.
 
+### Building and debugging
+You need MSYS2 for building - https://msys2.github.io/
+
+Once you get that, drop into mingw-w64 shell and:
+
+```
+MINGW64 ~$ pacman -S mingw-w64-i686-gcc mingw-w64-x86_64-gcc
+MINGW64 ~$ git clone https://github.com/katlogic/WindowsD
+MINGW64 ~$ cd WindowsD && make
+```
+
+To build wind32.exe, just launch the "mingw-w64 win32" shell, and:
+
+```
+MINGW32 ~$ cd WindowsD && make clean && make
+```
+
+Cross compiling (on linux, or mingw32 from mingw64) is possible, but you'll have to tweak Makefile on your own.
+
+Finally, to get debug version:
+
+```
+MINGW64 ~/WindowsD$ make DEBUG=1
+```
+
+And you'll see both the userspace exe, dlls and kernel driver tracing heavily into DbgView.
