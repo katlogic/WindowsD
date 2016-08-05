@@ -677,11 +677,11 @@ out:;
 		NTSTATUS st = NtUnloadDriver(&RTL_STRING(SVC_BASE BASENAME));
 		(void)st;
 		DBG("Unloading previous driver %x", (int)st);
-	}
-	if (ret) {
-		printf(BASENAME " uninstalled.\n");
-	} else {
-		printf("Some errors during uninstallation (already uninstalled?)\n");
+		if (ret) {
+			printf(BASENAME " uninstalled.\n");
+		} else {
+			printf("Some errors during uninstallation (already uninstalled?)\n");
+		}
 	}
 	return ret;
 }
@@ -757,10 +757,12 @@ static int usage(int interactive)
 	if (doit) {
 		int ret;
 		if (installed)
+			printf("Uninstalling...");
 			ret = do_uninstall(0);
 		else {
 			if (!interactive_install())
 				goto cancel;
+			printf("Installing...");
 			ret = do_install();
 		}
 		printf("All done! Press enter to close...");
