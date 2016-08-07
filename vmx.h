@@ -1,15 +1,49 @@
-#define BARRIER() volatile(“”: : :“memory”)
-#define ADJUST_MSR(mask,val) (((val) & (mask).HighPart) | (mask).LowPart)
+#define STKSZ 32*1024
 
-#define ASM_VMX_VMCLEAR_RAX       ".byte 0x66, 0x0f, 0xc7, 0x30"
-#define ASM_VMX_VMLAUNCH          ".byte 0x0f, 0x01, 0xc2"
-#define ASM_VMX_VMRESUME          ".byte 0x0f, 0x01, 0xc3"
-#define ASM_VMX_VMPTRLD_RAX       ".byte 0x0f, 0xc7, 0x30"
-#define ASM_VMX_VMREAD_RDX_RAX    ".byte 0x0f, 0x78, 0xd0"
-#define ASM_VMX_VMWRITE_RAX_RDX   ".byte 0x0f, 0x79, 0xd0"
-#define ASM_VMX_VMWRITE_RSP_RDX   ".byte 0x0f, 0x79, 0xd4"
-#define ASM_VMX_VMXOFF            ".byte 0x0f, 0x01, 0xc4"
-#define ASM_VMX_VMXON_RAX         ".byte 0xf3, 0x0f, 0xc7, 0x30"
+typedef {
+	ULONG_PTR vmcs; 
+	ULONG_PTR sp,ip;  		// Shadowed HOST_{RSP,RIP} values.
+	int insubvm; 			// is a sub-vm vmx_resumed() ?
+} subvm_t;
+
+typedef struct {
+	UCHAR vmcs_vmxon[PAGE_SIZE]; 	// The vmxon private page.
+	UCHAR vmcs_vm0[PAGE_SIZE]; 	// The top level guest.
+
+	KDESCRIPTOR gdtr, idtr; 	// Saved regs trashed by vmxon.
+	DWORD cr0, cr4;
+
+	int nest_count; 		// How many sub-VMs we have.
+	ULONG_PTR vm0; 			// Phys addr of vm0 VMCS.
+	subvm_t *subvm; 		// Current sub-vm ldptr.
+} percpu_t;
+
+// ORDER: entry.S!vmx_entry, CTX2CPU
+typedef {
+	percpu_t cpu;
+	UCHAR stack[STKSZ-sizeof(CONTEXT)-sizeof(percpu_t)-sizeof(ULONG_PTR)*4];
+	ULONG_PTR home[4]; 		// Home stack space for vmx_dispatch.
+	CONTEXT ctx;
+} stack_t;
+#define CTX2CPU(ctx) (percpu_t*)((((ULONG_PTR)(ctx))-((ULONG_PTR)(((stack_t*)0)->ctx))))
+
+union vmx_inst_info {
+	struct {
+		unsigned int scaling           :2; /* bit 0-1 */
+		unsigned int __rsvd0           :1; /* bit 2 */
+		unsigned int reg1              :4; /* bit 3-6 */
+		unsigned int addr_size         :3; /* bit 7-9 */
+		unsigned int memreg            :1; /* bit 10 */
+		unsigned int __rsvd1           :4; /* bit 11-14 */
+		unsigned int segment           :3; /* bit 15-17 */
+		unsigned int index_reg         :4; /* bit 18-21 */
+		unsigned int index_reg_invalid :1; /* bit 22 */
+		unsigned int base_reg          :4; /* bit 23-26 */
+		unsigned int base_reg_invalid  :1; /* bit 27 */
+		unsigned int reg2              :4; /* bit 28-31 */
+	} fields;
+	u32 word;
+};
 
 #define CPU_BASED_VIRTUAL_INTR_PENDING          0x00000004
 #define CPU_BASED_USE_TSC_OFFSETING             0x00000008
@@ -78,6 +112,7 @@
 #define SECONDARY_EXEC_PCOMMIT                  0x00200000
 #define SECONDARY_EXEC_TSC_SCALING              0x02000000
 
+
 #define VMX_BASIC_REVISION_MASK                 0x7fffffff
 #define VMX_BASIC_VMCS_SIZE_MASK                (0x1fffULL << 32)
 #define VMX_BASIC_32BIT_ADDRESSES               (1ULL << 48)
@@ -85,6 +120,9 @@
 #define VMX_BASIC_MEMORY_TYPE_MASK              (0xfULL << 50)
 #define VMX_BASIC_INS_OUT_INFO                  (1ULL << 54)
 #define VMX_BASIC_DEFAULT1_ZERO                 (1ULL << 55)
+
+#define VMX_MISC_VMWRITE_ALL                    0x20000000
+#define VMX_MISC_CR3_TARGET             	0x1ff0000
 
 /* MSRs & bits used for VMX enabling */
 #define MSR_IA32_VMX_BASIC                      0x480
@@ -318,37 +356,4 @@ enum vmcs_field {
 #define GUEST_ACTIVITY_ACTIVE           0
 #define GUEST_ACTIVITY_HLT              1
 
-typedef struct _VMX_GDTENTRY64
-{
-    ULONG_PTR Base;
-    ULONG Limit;
-    union
-    {
-        struct
-        {
-            UCHAR Flags1;
-            UCHAR Flags2;
-            UCHAR Flags3;
-            UCHAR Flags4;
-        } Bytes;
-        struct
-        {
-            USHORT SegmentType : 4;
-            USHORT DescriptorType : 1;
-            USHORT Dpl : 2;
-            USHORT Present : 1;
-
-            USHORT Reserved : 4;
-            USHORT System : 1;
-            USHORT LongMode : 1;
-            USHORT DefaultBig : 1;
-            USHORT Granularity : 1;
-
-            USHORT Unusable : 1;
-            USHORT Reserved2 : 15;
-        } Bits;
-        ULONG AccessRights;
-    };
-    USHORT Selector;
-} VMX_GDTENTRY64, *PVMX_GDTENTRY64;
 

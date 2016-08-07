@@ -47,4 +47,6 @@
 #define RTL_QUERY_REGISTRY_TYPECHECK 0x00000100
 #define RTL_QUERY_REGISTRY_TYPECHECK_SHIFT 24
 
+#define BARRIER() volatile(“”: : :“memory”)
+#define CURR_CPU KeGetCurrentProcessorNumberEx(NULL)
 
