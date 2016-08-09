@@ -105,7 +105,7 @@ static NTSTATUS unlock_key(PUNICODE_STRING name, int lock)
 {
 #define KLOCK_FLAGS (CM_KCB_NO_DELAY_CLOSE|CM_KCB_READ_ONLY_KEY)
 #define KUNLOCK_MARKER (1<<15)
-#define NSPAM 5
+#define NSPAM 6
 	HANDLE 		harr[NSPAM];
 	CM_KEY_BODY 	*kbs[NSPAM], *kb;
 	NTSTATUS 	st;
@@ -147,7 +147,7 @@ static NTSTATUS unlock_key(PUNICODE_STRING name, int lock)
 	DBG("kb=%p cb=%p, scanning...\n", kb, cb);
 	// Find ourselves in the CM_KEY_CONTROL_BLOCK structure.
 	for (i = 0; i < 512; i++) {
-		DBG("scan near %p %p", scan[i], &kb->KeyBodyList)
+		DBG("scan near %p = %p %p\n", &scan[i], scan[i], &kb->KeyBodyList)
 		if (scan[i] == &kb->KeyBodyList) {
 			cbptr = (void*)(scan+i-1);
 			break;
@@ -157,7 +157,8 @@ static NTSTATUS unlock_key(PUNICODE_STRING name, int lock)
 		DBG("cbptr not found\n");
 		goto out_unspam;
 	}
-	DBG("cbptr @ %p, offset %lld\n", cbptr, ((void*)cbptr)-((void*)cb));
+
+	DBG("cbptr @ %p, offset %p\n", cbptr, ((ULONG_PTR)(((void*)cbptr)-((void*)cb))));
 
 	// Now process array area.
 	for (i = 0; i < 4; i++)
@@ -166,6 +167,7 @@ static NTSTATUS unlock_key(PUNICODE_STRING name, int lock)
 
 	// And list area too.
 	kl = cbptr->KeyBodyListHead.Flink;
+	DBG("kl=%p\n");
 	while (kl && (kl != &cbptr->KeyBodyListHead)) {
 		CM_KEY_BODY *tkb = CONTAINING_RECORD(kl, CM_KEY_BODY, KeyBodyList);
 		if (notify_unlock(lock, tkb, kb))
