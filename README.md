@@ -1,10 +1,12 @@
-## WindowsD - Fixing broken windows (DSE and WinTcb protection levels)
+## WindowsD - Fixing broken windows (DSE, unkillable processes, uneditable registry..)
 
 WinD is a 3rd party "jailbreak" so administrators can remove some
 mal-features introduced in modern windows versions. Currently, it can disable:
 
 * Driver signing, including WHQL-only locked systems (secureboot tablets).
 * Protected processes (used for DRM, "WinTcb").
+* Read-only registry keys (can flip the bit on/off)
+* "Shadowed" registry keys via notification (can suspend and re-enable the notification)
 
 WinD works similiarly to [other tools](https://github.com/hfiref0x/DSEFix) which disable DSE, but is
 designed to be more user friendly and support for more OS/hardware combinations.
@@ -88,6 +90,36 @@ found at Alex's blog:
 * [Protected Processes Part 1: Pass-the-Hash Mitigations in Windows 8.1](http://www.alex-ionescu.com/?p=97)
 * [Protected Processes Part 2: Exploit/Jailbreak Mitigations, Unkillable Processes and Protected Services](http://ww.alex-ionescu.com/?p=116)
 * [Protected Processes Part 3: Windows PKI Internals (Signing Levels, Scenarios, Root Keys, EKUs & Runtime Signers)](http://www.alex-ionescu.com/?p=146)
+
+### Registry
+
+Windows contains 2 mechanisms to make dealing with registry especially painful:
+
+1. "Hard R/O lock", an undocumented, but publicly exported system call, `NtLockRegistryKey()`. This will
+   make given key read-only, until next reboot. Worse still, there does not need to be even a process or driver
+   holding onto the key.
+2. "Soft Lock", `NtNotifyChangeKey()`. For this one, there has to be something holding on the open key handle and
+   listening for notifications when something changes key value. Either a thread, or kernel-resident malware
+   will register a notification, and simply replace the key back to its value when it is notified when something
+   tries to remove it's startup routine.
+
+Note that both methods work at run time, they are not permanent permission within the registry.
+"Protection" like this, unlike permissions, works only within the currently running session.
+
+WindowsD allows you to override and control both methods.
+
+Method 1. is parameters `/RD` and `/RE`, for example:
+
+```
+> wind64 /RE \Registry\Machine\SYSTEM\CurrentControlSet\Control\Services
+```
+Will very sternly disallow writing to this subtree - no new services can be installed. There does not exist permission to disable this setting (except via `/RD` command), and almost nothing can override it - not even internal kernel APIs.
+
+Method 2:
+```
+> wind64 /ND \Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion\Windows
+```
+Will disable notifications on this subtree (which contains frequently hijacked autorun, `AppInit_DLLs`). Now you can edit it back to value you need without mysterious process forcing it back. Finally, you can even protect it with `/RE`.
 
 ### Bugs
 
