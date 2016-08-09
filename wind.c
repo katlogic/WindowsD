@@ -89,9 +89,12 @@ static ULONG_PTR guess_ci()
 
 static int k_analyze(wind_config_t *cfg)
 {
+	WCHAR path[PATH_MAX];
+	HMODULE k;
+       
 	DBG("ntoskrnl?");
-	HMODULE k = LoadLibraryEx(L"NTOSKRNL.EXE",NULL,
-			DONT_RESOLVE_DLL_REFERENCES|LOAD_LIBRARY_SEARCH_SYSTEM32);
+	wcscpy(path + GetSystemDirectory(path, PATH_MAX), L"\\NTOSKRNL.EXE");
+	k = LoadLibraryEx(path, NULL, DONT_RESOLVE_DLL_REFERENCES);
 	BYTE *p;
 	if (!k) {
 		DBG("ntoskrnl failed?");
@@ -126,19 +129,26 @@ protfound:;
 
 static ULONG_PTR ci_analyze(void *mods, wind_config_t *cfg)
 {
-	HMODULE ci = LoadLibraryEx(L"CI.dll",NULL,
-			DONT_RESOLVE_DLL_REFERENCES|LOAD_LIBRARY_SEARCH_SYSTEM32);
-	BYTE *p = (void*)GetProcAddress(ci, "CiInitialize");
-	ULONG_PTR mod = (ULONG_PTR)ci;
+	HMODULE ci;
+	BYTE *p;
+	ULONG_PTR mod;
 	ULONG_PTR base = get_mod_base(mods, "CI.DLL");
 	ULONG_PTR ci_opt = 0;
 	ULONG_PTR key = 0;
+	WCHAR path[PATH_MAX];
 #ifdef _WIN64
 	MEMORY_BASIC_INFORMATION info;
 #endif
-
-	if (!p)
+	wcscpy(path + GetSystemDirectory(path, PATH_MAX), L"\\CI.DLL");
+ 	ci = LoadLibraryEx(path, NULL, DONT_RESOLVE_DLL_REFERENCES);
+	if (!ci) {
+		DBG("no ci initialize %d %S",(int)GetLastError(), path);
 		goto out_free;
+	}
+
+       	p = (void*)GetProcAddress(ci, "CiInitialize");
+       	mod = (ULONG_PTR)ci;
+
 	DBG("analyzing ci, modbase=%p, userbase=%p",(void*)base, (void*)mod);
 
 	// find jmp CipInitialize
