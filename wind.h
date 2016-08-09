@@ -15,7 +15,11 @@ typedef struct {
 } wind_config_t;
 
 // Load a driver. Argument is simply the unicode string.
-#define WIND_IOCTL_INSMOD CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define WIND_IOCTL_INSMOD CTL_CODE(FILE_DEVICE_UNKNOWN, 0x810, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// Lock/Unlock registry key.
+#define WIND_IOCTL_REGLOCK CTL_CODE(FILE_DEVICE_UNKNOWN, 0x811, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define WIND_IOCTL_REGUNLOCK CTL_CODE(FILE_DEVICE_UNKNOWN, 0x812, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 // Get/set WinTcb process protection.
 #define WIND_IOCTL_PROT   CTL_CODE(FILE_DEVICE_UNKNOWN, 0x900, METHOD_BUFFERED, FILE_ANY_ACCESS)
@@ -68,6 +72,10 @@ static NTSTATUS wind_ioctl(HANDLE dev, ULONG num, void *buf, int len)
 				num, buf, len, NULL, 0);
 	}
 }
+static NTSTATUS wind_ioctl_string(HANDLE dev, ULONG num, WCHAR *s)
+{
+	return wind_ioctl(dev, num, s, wcslen(s)*2+2);
+}
 
 // Close driver.
 static NTSTATUS wind_close(HANDLE dev)
@@ -101,7 +109,7 @@ static NTSTATUS wind_insmod(WCHAR *svc)
 
 		HANDLE h = wind_open();
 		if (!h) return status;
-		status = wind_ioctl(h, WIND_IOCTL_INSMOD, svc, wcslen(svc)*2+2);
+		status = wind_ioctl_string(h, WIND_IOCTL_INSMOD, svc);
 		wind_close(h);
 	}
 	return status;

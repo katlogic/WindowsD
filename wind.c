@@ -732,8 +732,12 @@ static int usage(int interactive)
 	putchar('\n');
 
 
-	printf( "This program disables driver signing policy (DSE).\n"
-		"Either per driver-load, or permanently (loaded at system start).\n\n");
+	printf(
+		"This program can disable some restrictions of Windows:\n"
+		" * Driver signing ('DSE', breaks freeware utilities)\n"
+		" * Process protection ('unkillable processes', WinTCB)\n"
+		" * Read-only registry keys (malware is the only user)\n\n"
+	);
 
 	if (!interactive) {
 		printf("usage: \n"
@@ -741,7 +745,9 @@ static int usage(int interactive)
 " "BASENAME " /U                        uninstall, re-enable DSE permanently\n"
 " "BASENAME " /W                        run interactive installer\n"
 " "BASENAME " /D <pid>                  de-protect specified PID\n"
-" "BASENAME " /L [service|driver.sys]   load unsigned driver and keep DSE status intact\n");
+" "BASENAME " /L [service|driver.sys]   load unsigned driver and keep DSE status intact\n"
+" "BASENAME " /RU <\\Registry\\Path>      unlock registry key\n"
+" "BASENAME " /RL <\\Registry\\Path>      lock registry key\n");
 		goto out;
 	}
 
@@ -924,6 +930,35 @@ static int run_service()
 	return 1;
 }
 
+static int regunlock(WCHAR *p)
+{
+	HANDLE dev;
+	NTSTATUS status;
+	int cmd = toupper(*p++);
+	if ((!cmd) || ((cmd != 'U') && (cmd != 'L')))
+		usage(0);
+	while (*p == L' ' || *p == L'\t') p++;
+	dev = check_driver(0);
+	if (!dev) {
+		printf("Failed to open/install WinD device.\n");
+		return 0;
+	}
+
+	if (cmd == 'U') {
+		printf("Unlocking %S...", p);
+		status = wind_ioctl_string(dev, WIND_IOCTL_REGUNLOCK, p);
+	} else {
+		printf("Locking %S...", p);
+		status = wind_ioctl_string(dev, WIND_IOCTL_REGLOCK, p);
+	}
+	if (NT_SUCCESS(status))
+		printf("OK\n");
+	else
+		printf("error %08x\n", (int)status);
+	wind_close(dev);
+	return NT_SUCCESS(status);
+}
+
 void ENTRY(win_main)()
 {
 	int ret = 0;
@@ -961,6 +996,9 @@ void ENTRY(win_main)()
 			break;
 		case 'D':
 			ret = !!unprotect(cmd);
+			break;
+		case 'R':
+			ret = !!regunlock(cmd);
 			break;
 		default:
 			usage(0);

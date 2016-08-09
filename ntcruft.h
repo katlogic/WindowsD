@@ -3,6 +3,7 @@
 #define SystemBootEnvironmentInformation 0x5a
 #define SystemCodeIntegrityInformation 0x67
 #define SystemSecureBootPolicyInformation 0x8f
+
 typedef struct {
 	HANDLE Section;
 	PVOID MappedBase;

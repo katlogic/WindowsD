@@ -3,11 +3,11 @@
 #define _WIND_DRIVER
 #include "defs.h"
 #include "wind.h"
+#include "regint.h"
 
 static wind_config_t cfg = {(void*)(-(LONG)sizeof(cfg))};
 static KMUTEX ioctl_mutex;
 
-//
 // What follows is the meat of the whole DSE bypass.
 //
 // We temporarily flip the ci_Options to not validate, load driver, flip
@@ -37,7 +37,6 @@ static NTSTATUS driver_sideload(PUNICODE_STRING svc)
 }
 
 // The rest is just boring driver boilerplate...
-
 static VOID NTAPI dev_unload(IN PDRIVER_OBJECT self)
 {
 	DBG("unloading!\n");
@@ -50,7 +49,187 @@ static NTSTATUS NTAPI dev_open(IN PDEVICE_OBJECT dev, IN PIRP irp)
 	irp->IoStatus.Information = 0;
 	IoCompleteRequest(irp, IO_NO_INCREMENT);
 	return STATUS_SUCCESS;
+}
 
+static int notify_unlock(int lock, CM_KEY_BODY *tkb, CM_KEY_BODY *kb)
+{
+	int ret = 0;
+	CM_NOTIFY_BLOCK *nb;
+	DBG("unlock %d %p %p\n",lock,tkb,kb);
+
+	if (!tkb)
+		return 0;
+	if (tkb->KeyControlBlock != kb->KeyControlBlock)
+		return 0;
+	nb = tkb->NotifyBlock;
+	while (nb) {
+		union {
+			struct {
+			ULONG low:8;
+			ULONG high:8;
+			ULONG rest:14;
+			};
+			ULONG n:30;
+		} f;
+		if (nb->KeyControlBlock != kb->KeyControlBlock)
+			goto skipentry;
+
+		f.n = nb->Filter;
+		DBG("process NB @ %p Filter=%x high=%x low=%x\n",
+				nb, nb->Filter, f.high, f.low);
+		if (!lock && f.low && !f.high) {
+			f.high = f.low;
+			f.low = 0;
+			DBG("unlock: changing filter from %x to %x", nb->Filter, f.n);
+			nb->Filter = f.n;
+			ret++;
+		}
+		if (lock && f.high && !f.low) {
+			f.low = f.high;
+			f.high = 0;
+			DBG("re-lock: changing filter from %x to %x", nb->Filter, f.n);
+			nb->Filter = f.n;
+			ret++;
+		}
+skipentry:
+		if (!nb->HiveList.Flink)
+			break;
+		nb = CONTAINING_RECORD(nb->HiveList.Flink,
+				CM_NOTIFY_BLOCK, HiveList);
+	}
+	return ret;
+}
+
+// Unlock/Lock registry key. This is slightly racey, don't use with busy keys.
+static NTSTATUS unlock_key(PUNICODE_STRING name, int lock)
+{
+#define KLOCK_FLAGS (CM_KCB_NO_DELAY_CLOSE|CM_KCB_READ_ONLY_KEY)
+#define KUNLOCK_MARKER (1<<15)
+	HANDLE 		harr[5];
+	CM_KEY_BODY 	*kbs[5], *kb;
+	NTSTATUS 	st;
+	CM_KEY_CONTROL_BLOCK *cb;
+	LIST_ENTRY 	*kl;
+	void 		**scan;
+	int 		i;
+	struct {
+		LIST_ENTRY 	KeyBodyListHead;
+		CM_KEY_BODY  	*KeyBodyArray[4];
+	} *cbptr = NULL;
+
+	// Spam handles to ensure we'll appear in cbptr->KeyBodyListHead.
+	for (i = 0; i < 5; i++) {
+		OBJECT_ATTRIBUTES attr = {
+			.Length = sizeof(attr),
+			.Attributes = OBJ_KERNEL_HANDLE|OBJ_CASE_INSENSITIVE,
+			.ObjectName = name,
+		};
+		st = ZwOpenKey(&harr[i], KEY_READ, &attr);
+		if (!NT_SUCCESS(st))
+			goto out_unspam_zwclose;
+	}
+	for (i = 0; i < 5; i++) {
+		st = ObReferenceObjectByHandle(harr[i], KEY_WRITE,
+				*CmKeyObjectType, 0, (void*)&kbs[i], NULL);
+		if (!NT_SUCCESS(st))
+			goto out_unspam_deref;
+	}
+
+	kb = kbs[4];
+	cb = kb->KeyControlBlock;
+	st = STATUS_KEY_DELETED;
+	if (!cb || cb->Delete)
+		goto out_unspam;
+
+	scan = (void*)cb;
+	st = STATUS_INTERNAL_ERROR;
+	DBG("kb=%p cb=%p, scanning...\n", kb, cb);
+	// Find ourselves in the CM_KEY_CONTROL_BLOCK structure.
+	for (i = 0; i < 512; i++) {
+		DBG("scan near %p %p", scan[i], &kb->KeyBodyList)
+		if (scan[i] == &kb->KeyBodyList) {
+			cbptr = (void*)(scan+i-1);
+			break;
+		}
+	}
+	if (!cbptr) {
+		DBG("cbptr not found\n");
+		goto out_unspam;
+	}
+	DBG("cbptr @ %p, offset %lld\n", cbptr, ((void*)cbptr)-((void*)cb));
+
+	// Now process array area.
+	for (i = 0; i < 4; i++)
+		if (notify_unlock(lock, cbptr->KeyBodyArray[i], kb))
+			st = STATUS_SUCCESS;
+
+	// And list area too.
+	kl = cbptr->KeyBodyListHead.Flink;
+	while (kl && (kl != &cbptr->KeyBodyListHead)) {
+		CM_KEY_BODY *tkb = CONTAINING_RECORD(kl, CM_KEY_BODY, KeyBodyList);
+		if (notify_unlock(lock, tkb, kb))
+			st = STATUS_SUCCESS;
+		kl = kl->Flink;
+	}
+
+	DBG("lock=%d, kb=%p, cb=%p, t=%x refc=%u flags=%02x nb=%p\n",
+	lock, kb, cb, kb->Type, cb->RefCount, cb->ExtFlags, kb->NotifyBlock);
+
+	// Type 2 keys: Hard lock flag via NtLockRegistryKey public (!) syscall.
+	if (lock) {
+		if (!(cb->ExtFlags & KUNLOCK_MARKER))
+			goto out_unspam;
+		cb->ExtFlags &= ~KUNLOCK_MARKER;
+		cb->ExtFlags |= KLOCK_FLAGS;
+		st = STATUS_SUCCESS;
+	} else {
+		if (cb->ExtFlags & KUNLOCK_MARKER)
+			goto out_unspam;
+		if ((cb->ExtFlags & KLOCK_FLAGS) != KLOCK_FLAGS)
+			goto out_unspam;
+		cb->ExtFlags &= ~KLOCK_FLAGS;
+		cb->ExtFlags |= KUNLOCK_MARKER;
+		st = STATUS_SUCCESS;
+	}
+out_unspam:;
+	i = 5;
+out_unspam_deref:
+	for (int j = 0; j < i; j++)
+		ObDereferenceObject(kbs[j]);
+	i = 5;
+out_unspam_zwclose:
+	for (int j = 0; j < i; j++)
+		ZwClose(harr[j]);
+	return st;
+}
+
+static NTSTATUS change_prot(wind_prot_t *req)
+{
+	int getonly;
+	void *proc;
+	NTSTATUS status;
+	if ((getonly = (req->pid < 0)))
+		req->pid = -req->pid;
+	status = PsLookupProcessByProcessId((HANDLE)(req->pid), (PEPROCESS*)&proc);
+	if (!NT_SUCCESS(status))
+		return status;
+	if (cfg.protbit < 0) {
+		WIND_PS_PROTECTION save, *prot = proc + cfg.protofs - 2;
+		memcpy(&save, prot, sizeof(save));
+		if (!getonly)
+			memcpy(prot, &req->prot, sizeof(req->prot));
+		memcpy(&req->prot, &save, sizeof(save));
+	} else {
+		ULONG prev, *prot = proc + cfg.protofs;
+		prev = *prot;
+		if (!getonly)
+			*prot = (prev & (~(1<<cfg.protbit)))
+				| ((!!req->prot.Level) << cfg.protbit);
+		memset(&req->prot, 0, sizeof(req->prot));
+		req->prot.Level = (prev>>cfg.protbit)&1;
+	}
+	ObDereferenceObject(proc);
+	return status;
 }
 
 static NTSTATUS NTAPI dev_control(IN PDEVICE_OBJECT dev, IN PIRP irp)
@@ -58,6 +237,7 @@ static NTSTATUS NTAPI dev_control(IN PDEVICE_OBJECT dev, IN PIRP irp)
 	PIO_STACK_LOCATION io_stack;
 	ULONG code;
 	NTSTATUS status = STATUS_INVALID_PARAMETER;
+	UNICODE_STRING us;
 	void *buf;
 	int len;
 
@@ -81,11 +261,8 @@ static NTSTATUS NTAPI dev_control(IN PDEVICE_OBJECT dev, IN PIRP irp)
 	status = STATUS_INVALID_BUFFER_SIZE;
 	DBG("code=%08x\n",(unsigned)code);
 
-
-switch (code) {
-	case WIND_IOCTL_INSMOD: {
-		UNICODE_STRING us;
-
+	// 0x10 marks string argument.
+	if (code & (0x10 << 2)) {
 		// must be at least 2 long, must be even, must terminate with 0
 		if ((len < 2) || (len&1) || (*((WCHAR*)(buf+len-2))!=0))
 			goto out;
@@ -93,40 +270,25 @@ switch (code) {
 		us.Buffer = (void*)buf;
 		us.Length = len-2;
 		us.MaximumLength = len;
+	}
 
+
+switch (code) {
+	case WIND_IOCTL_INSMOD:
 		status = driver_sideload(&us);
 		break;
-	}
-	case WIND_IOCTL_PROT: {
-		wind_prot_t *req = buf;
-		int getonly;
-		void *proc;
-		if (len != sizeof(*req))
-			goto out;
-		if ((getonly = (req->pid < 0)))
-			req->pid = -req->pid;
-		status = PsLookupProcessByProcessId((HANDLE)(req->pid), (PEPROCESS*)&proc);
-		if (!NT_SUCCESS(status))
-			goto out;
-		if (cfg.protbit < 0) {
-			WIND_PS_PROTECTION save, *prot = proc + cfg.protofs - 2;
-			memcpy(&save, prot, sizeof(save));
-			if (!getonly)
-				memcpy(prot, &req->prot, sizeof(req->prot));
-			memcpy(&req->prot, &save, sizeof(save));
-		} else {
-			ULONG prev, *prot = proc + cfg.protofs;
-			prev = *prot;
-			if (!getonly)
-				*prot = (prev & (~(1<<cfg.protbit)))
-					| ((!!req->prot.Level) << cfg.protbit);
-			memset(&req->prot, 0, sizeof(req->prot));
-			req->prot.Level = (prev>>cfg.protbit)&1;
-		}
-		irp->IoStatus.Information = sizeof(*req);
-		ObDereferenceObject(proc);
+	case WIND_IOCTL_REGLOCK:
+		status = unlock_key(&us, 1);
 		break;
-	}
+	case WIND_IOCTL_REGUNLOCK:
+		status = unlock_key(&us, 0);
+		break;
+	case WIND_IOCTL_PROT:
+		if (len != sizeof(wind_prot_t))
+			goto out;
+		status = change_prot(buf);
+		irp->IoStatus.Information = len;
+		break;
 }
 out:;
 	KeReleaseMutex(&ioctl_mutex, 0);
