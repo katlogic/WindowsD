@@ -100,8 +100,8 @@ skipentry:
 	return ret;
 }
 
-// Unlock/Lock registry key. This is slightly racey, don't use with busy keys.
-static NTSTATUS unlock_key(PUNICODE_STRING name, int lock)
+// Stop/reenable notifications on registry key.
+static NTSTATUS reg_set_notify(PUNICODE_STRING name, int lock)
 {
 #define KLOCK_FLAGS (CM_KCB_NO_DELAY_CLOSE|CM_KCB_READ_ONLY_KEY)
 #define KUNLOCK_MARKER (1<<15)
@@ -123,7 +123,7 @@ static NTSTATUS unlock_key(PUNICODE_STRING name, int lock)
 		OBJECT_ATTRIBUTES attr = {
 			.Length = sizeof(attr),
 			.Attributes = OBJ_KERNEL_HANDLE|OBJ_CASE_INSENSITIVE,
-			.ObjectName = name,
+			.ObjectName = name
 		};
 		st = ZwOpenKey(&harr[i], KEY_READ, &attr);
 		if (!NT_SUCCESS(st))
@@ -175,25 +175,6 @@ static NTSTATUS unlock_key(PUNICODE_STRING name, int lock)
 		kl = kl->Flink;
 	}
 
-	DBG("lock=%d, kb=%p, cb=%p, t=%x refc=%u flags=%02x nb=%p\n",
-	lock, kb, cb, kb->Type, cb->RefCount, cb->ExtFlags, kb->NotifyBlock);
-
-	// Type 2 keys: Hard lock flag via NtLockRegistryKey public (!) syscall.
-	if (lock) {
-		if (!(cb->ExtFlags & KUNLOCK_MARKER))
-			goto out_unspam;
-		cb->ExtFlags &= ~KUNLOCK_MARKER;
-		cb->ExtFlags |= KLOCK_FLAGS;
-		st = STATUS_SUCCESS;
-	} else {
-		if (cb->ExtFlags & KUNLOCK_MARKER)
-			goto out_unspam;
-		if ((cb->ExtFlags & KLOCK_FLAGS) != KLOCK_FLAGS)
-			goto out_unspam;
-		cb->ExtFlags &= ~KLOCK_FLAGS;
-		cb->ExtFlags |= KUNLOCK_MARKER;
-		st = STATUS_SUCCESS;
-	}
 out_unspam:;
 	i = NSPAM;
 out_unspam_deref:
@@ -203,6 +184,48 @@ out_unspam_deref:
 out_unspam_zwclose:
 	for (int j = 0; j < i; j++)
 		ZwClose(harr[j]);
+	return st;
+}
+
+// Apply/remove hard lock.
+static NTSTATUS reg_set_lock(PUNICODE_STRING name, int lock)
+{
+	OBJECT_ATTRIBUTES attr = {
+		.Length = sizeof(attr),
+		.Attributes = OBJ_KERNEL_HANDLE|OBJ_CASE_INSENSITIVE,
+		.ObjectName = name
+	};
+	HANDLE h;
+	NTSTATUS st;
+	CM_KEY_CONTROL_BLOCK *cb;
+	CM_KEY_BODY *kb;
+	st = ZwOpenKey(&h, KEY_READ, &attr);
+	if (!NT_SUCCESS(st))
+		return st;
+	st = ObReferenceObjectByHandle(h, KEY_WRITE,
+			*CmKeyObjectType, 0, (void*)&kb, NULL);
+
+	if (!NT_SUCCESS(st)) {
+		ZwClose(h);
+		return st;
+	}
+	cb = kb->KeyControlBlock;
+	st = STATUS_KEY_DELETED;
+	if (!cb || cb->Delete)
+		goto out;
+
+	DBG("lock=%d, kb=%p, cb=%p, t=%x refc=%u flags=%02x nb=%p\n",
+	lock, kb, cb, kb->Type, cb->RefCount, cb->ExtFlags, kb->NotifyBlock);
+
+	st = STATUS_SUCCESS;
+	if (lock) {
+		cb->ExtFlags |= KLOCK_FLAGS;
+	} else {
+		cb->ExtFlags &= ~KLOCK_FLAGS;
+	}
+out:;
+	ObDereferenceObject(kb);
+	ZwClose(h);
 	return st;
 }
 
@@ -280,11 +303,13 @@ switch (code) {
 	case WIND_IOCTL_INSMOD:
 		status = driver_sideload(&us);
 		break;
-	case WIND_IOCTL_REGLOCK:
-		status = unlock_key(&us, 1);
+	case WIND_IOCTL_REGLOCKON:
+	case WIND_IOCTL_REGLOCKOFF:
+		status = reg_set_lock(&us, (code>>2)&1);
 		break;
-	case WIND_IOCTL_REGUNLOCK:
-		status = unlock_key(&us, 0);
+	case WIND_IOCTL_REGNON:
+	case WIND_IOCTL_REGNOFF:
+		status = reg_set_notify(&us, (code>>2)&1);
 		break;
 	case WIND_IOCTL_PROT:
 		if (len != sizeof(wind_prot_t))

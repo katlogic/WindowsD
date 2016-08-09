@@ -746,7 +746,8 @@ static int usage(int interactive)
 		"This program can disable some restrictions of Windows:\n"
 		" * Driver signing ('DSE', breaks freeware utilities)\n"
 		" * Process protection ('unkillable processes', WinTCB)\n"
-		" * Read-only registry keys (malware is the only user)\n\n"
+		" * Hard locked registry keys (syscall, malware is the only user)\n\n"
+		" * Silently locked registry keys (notify, malware is the only user)\n\n"
 	);
 
 	if (!interactive) {
@@ -756,8 +757,11 @@ static int usage(int interactive)
 " "BASENAME " /W                        run interactive installer\n"
 " "BASENAME " /D <pid>                  de-protect specified PID\n"
 " "BASENAME " /L [service|driver.sys]   load unsigned driver and keep DSE status intact\n"
-" "BASENAME " /RU <\\Registry\\Path>      unlock registry key\n"
-" "BASENAME " /RL <\\Registry\\Path>      lock registry key\n");
+" "BASENAME " /RD <\\Registry\\Path>      R/O lock Disable\n"
+" "BASENAME " /RE <\\Registry\\Path>      R/O lock Enable\n"
+" "BASENAME " /ND <\\Registry\\Path>      Notify/refresh Disable\n"
+" "BASENAME " /NE <\\Registry\\Path>      Notify/refresh re-Enable\n"
+);
 		goto out;
 	}
 
@@ -940,12 +944,12 @@ static int run_service()
 	return 1;
 }
 
-static int regunlock(WCHAR *p)
+static int regunlock(int mcmd, WCHAR *p)
 {
 	HANDLE dev;
 	NTSTATUS status;
 	int cmd = toupper(*p++);
-	if ((!cmd) || ((cmd != 'U') && (cmd != 'L')))
+	if ((!cmd) || ((cmd != 'E') && (cmd != 'D')))
 		usage(0);
 	while (*p == L' ' || *p == L'\t') p++;
 	dev = check_driver(0);
@@ -954,12 +958,18 @@ static int regunlock(WCHAR *p)
 		return 0;
 	}
 
-	if (cmd == 'U') {
+	if (cmd == 'D') {
 		printf("Unlocking %S...", p);
-		status = wind_ioctl_string(dev, WIND_IOCTL_REGUNLOCK, p);
+		status = wind_ioctl_string(dev,
+				mcmd=='N'
+				?WIND_IOCTL_REGNOFF
+				:WIND_IOCTL_REGLOCKOFF, p);
 	} else {
 		printf("Locking %S...", p);
-		status = wind_ioctl_string(dev, WIND_IOCTL_REGLOCK, p);
+		status = wind_ioctl_string(dev,
+				mcmd=='N'
+				?WIND_IOCTL_REGNON
+				:WIND_IOCTL_REGLOCKON, p);
 	}
 	if (NT_SUCCESS(status))
 		printf("OK\n");
@@ -971,7 +981,7 @@ static int regunlock(WCHAR *p)
 
 void ENTRY(win_main)()
 {
-	int ret = 0;
+	int cc, ret = 0;
 	CONSOLE_SCREEN_BUFFER_INFO csbi;
 	int explorer = GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi)
 		&& !(csbi.dwCursorPosition.X|csbi.dwCursorPosition.Y);
@@ -988,7 +998,8 @@ void ENTRY(win_main)()
 		usage(explorer);
 	cmd += 2;
 
-	switch (toupper(cmd[-1])) {
+	cc = toupper(cmd[-1]);
+	switch (cc) {
 		case 'I':
 			ret = !!do_install();
 			break;
@@ -1008,7 +1019,8 @@ void ENTRY(win_main)()
 			ret = !!unprotect(cmd);
 			break;
 		case 'R':
-			ret = !!regunlock(cmd);
+		case 'N':
+			ret = !!regunlock(cc, cmd);
 			break;
 		default:
 			usage(0);
