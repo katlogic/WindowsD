@@ -1,4 +1,6 @@
-## WindowsD - Fixing broken windows (DSE, unkillable processes, uneditable registry..)
+## WindowsD - Fixing broken windows
+
+*Aka drivers won't load, processes are unkillable, registry can't be edited...*
 
 WinD is a 3rd party "jailbreak" so administrators can remove some
 mal-features introduced in modern windows versions. Currently, it can disable:
