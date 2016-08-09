@@ -105,8 +105,9 @@ static NTSTATUS unlock_key(PUNICODE_STRING name, int lock)
 {
 #define KLOCK_FLAGS (CM_KCB_NO_DELAY_CLOSE|CM_KCB_READ_ONLY_KEY)
 #define KUNLOCK_MARKER (1<<15)
-	HANDLE 		harr[5];
-	CM_KEY_BODY 	*kbs[5], *kb;
+#define NSPAM 5
+	HANDLE 		harr[NSPAM];
+	CM_KEY_BODY 	*kbs[NSPAM], *kb;
 	NTSTATUS 	st;
 	CM_KEY_CONTROL_BLOCK *cb;
 	LIST_ENTRY 	*kl;
@@ -118,7 +119,7 @@ static NTSTATUS unlock_key(PUNICODE_STRING name, int lock)
 	} *cbptr = NULL;
 
 	// Spam handles to ensure we'll appear in cbptr->KeyBodyListHead.
-	for (i = 0; i < 5; i++) {
+	for (i = 0; i < NSPAM; i++) {
 		OBJECT_ATTRIBUTES attr = {
 			.Length = sizeof(attr),
 			.Attributes = OBJ_KERNEL_HANDLE|OBJ_CASE_INSENSITIVE,
@@ -128,14 +129,14 @@ static NTSTATUS unlock_key(PUNICODE_STRING name, int lock)
 		if (!NT_SUCCESS(st))
 			goto out_unspam_zwclose;
 	}
-	for (i = 0; i < 5; i++) {
+	for (i = 0; i < NSPAM; i++) {
 		st = ObReferenceObjectByHandle(harr[i], KEY_WRITE,
 				*CmKeyObjectType, 0, (void*)&kbs[i], NULL);
 		if (!NT_SUCCESS(st))
 			goto out_unspam_deref;
 	}
 
-	kb = kbs[4];
+	kb = kbs[NSPAM-1];
 	cb = kb->KeyControlBlock;
 	st = STATUS_KEY_DELETED;
 	if (!cb || cb->Delete)
@@ -192,11 +193,11 @@ static NTSTATUS unlock_key(PUNICODE_STRING name, int lock)
 		st = STATUS_SUCCESS;
 	}
 out_unspam:;
-	i = 5;
+	i = NSPAM;
 out_unspam_deref:
 	for (int j = 0; j < i; j++)
 		ObDereferenceObject(kbs[j]);
-	i = 5;
+	i = NSPAM;
 out_unspam_zwclose:
 	for (int j = 0; j < i; j++)
 		ZwClose(harr[j]);
