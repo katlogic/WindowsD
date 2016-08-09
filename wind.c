@@ -746,8 +746,9 @@ static int usage(int interactive)
 		"This program can disable some restrictions of Windows:\n"
 		" * Driver signing ('DSE', breaks freeware utilities)\n"
 		" * Process protection ('unkillable processes', WinTCB)\n"
-		" * Hard locked registry keys (syscall, malware is the only user)\n\n"
-		" * Silently locked registry keys (notify, malware is the only user)\n\n"
+		" * Hard locked registry keys (syscall, malware is the only user)\n"
+		" * Silently locked registry keys (notify, malware is the only user)\n"
+		"\n"
 	);
 
 	if (!interactive) {
@@ -912,6 +913,10 @@ static int run_service()
 	DBG("service launched");
 
 	StartServiceCtrlDispatcher(s_table);
+
+	// If we're in safe mode, do nothing.
+	if (GetSystemMetrics(SM_CLEANBOOT))
+		return 1;
 
 	elevate();
 
