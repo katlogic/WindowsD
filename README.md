@@ -101,27 +101,36 @@ Windows contains 2 mechanisms to make dealing with registry especially painful:
    make given key read-only, until next reboot. Worse still, there does not need to be even a process or driver
    holding onto the key.
 2. "Soft Lock", `NtNotifyChangeKey()`. For this one, there has to be something holding on the open key handle and
-   listening for notifications when something changes key value. Either a thread, or kernel-resident malware
-   will register a notification, and simply replace the key back to its value when it is notified when something
-   tries to remove it's startup routine.
+   listening to notifications about changes to key value. The listener is either a thread, or kernel-resident
+   driver. They'll usually silently replace the key back to value they want. No errors are reported, but the key
+   cannot be edited.
 
 Note that both methods work at run time, they are not permanent permission within the registry.
 "Protection" like this, unlike permissions, works only within the currently running session.
 
 WindowsD allows you to override and control both methods.
 
-Method 1. is parameters `/RD` and `/RE`, for example:
+Method 1 example. Parameters `/RD` and `/RE`:
 
 ```
 > wind64 /RE \Registry\Machine\SYSTEM\CurrentControlSet\Control\Services
 ```
 Will very sternly disallow writing to this subtree - no new services can be installed. There does not exist permission to disable this setting (except via `/RD` command), and almost nothing can override it - not even internal kernel APIs.
 
-Method 2:
+`/RD` and `/RE` can be issued on any key.
+
+Method 2 example. Parameters `/ND` and `/NE`
 ```
 > wind64 /ND \Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion\Windows
 ```
-Will disable notifications on this subtree (which contains frequently hijacked autorun, `AppInit_DLLs`). Now you can edit it back to value you need without mysterious process forcing it back. Finally, you can even protect it with `/RE`.
+Will disable notifications on this subtree (which contains frequently hijacked autorun, `AppInit_DLLs`). Now you can edit it back to value you want, without something mysterious forcing it back. Finally, you can even protect it with `/RE`.
+
+Note that `/NE` can be issued only on key with notifications previously disabled via `/ND`
+
+All registry paths are NT, not the usualy Win32 ones:
+
+`\HKLM\` becomes `\Registry\Machine\`
+`\HKCU\` becomes `\Registry\User\`
 
 ### Bugs
 
@@ -140,7 +149,7 @@ There is header-only C API - `wind.h` Usage goes like:
 * `wind_ioctl(handle,command,buffer,buflen)` - send command(s)
 * `wind_close(handle)` - close the control device
 
-`command` can be one of:
+`command` can be:
 
 `WIND_IOCTL_INSMOD` - load driver, bypassing DSE. Service entry must already
 exist for the driver. Buffer is UTF16 service registry path, length is size of
@@ -159,6 +168,10 @@ To unprotect a process, just clear all its flags - bzero(&buf->prot).
 You can re-protect a process after you're done with it, simply by calling the
 ioctl again with same buffer (it holds the original flags) and the `buf->prot`
 will be swapped again.
+
+`WIND_IOCTL_REGNON/OFF, WIND_IOCTL_REGLOCKON/OFF`
+
+These take string with registry key as paramater, and can turn locking and notifications on/off.
 
 ### Internals
 
