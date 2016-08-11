@@ -199,6 +199,7 @@ static NTSTATUS reg_set_lock(PUNICODE_STRING name, int lock)
 	NTSTATUS st;
 	CM_KEY_CONTROL_BLOCK *cb;
 	CM_KEY_BODY *kb;
+
 	st = ZwOpenKey(&h, KEY_READ, &attr);
 	if (!NT_SUCCESS(st))
 		return st;
@@ -227,6 +228,34 @@ out:;
 	ObDereferenceObject(kb);
 	ZwClose(h);
 	return st;
+}
+
+static NTSTATUS regs_do(NTSTATUS (*fn)(PUNICODE_STRING,int), PUNICODE_STRING names, int lock)
+{
+	WCHAR *p = names->Buffer;
+	NTSTATUS status = STATUS_SUCCESS;
+
+	if (!p)
+		return status;
+
+	while (*p) {
+		WCHAR *next;
+		UNICODE_STRING split;
+		NTSTATUS item_status;
+	
+		next = wcschr(p, L';');
+		if (next)
+			*next = 0;
+
+		RtlInitUnicodeString(&split, p);
+		item_status = fn(&split, lock);
+		if (NT_SUCCESS(status) && !NT_SUCCESS(item_status))
+			status = item_status;
+		if (!next)
+			break;
+		p = next+1;
+	}
+	return status;
 }
 
 static NTSTATUS change_prot(wind_prot_t *req)
@@ -305,11 +334,11 @@ switch (code) {
 		break;
 	case WIND_IOCTL_REGLOCKON:
 	case WIND_IOCTL_REGLOCKOFF:
-		status = reg_set_lock(&us, (code>>2)&1);
+		status = regs_do(reg_set_lock, &us, (code>>2)&1);
 		break;
 	case WIND_IOCTL_REGNON:
 	case WIND_IOCTL_REGNOFF:
-		status = reg_set_notify(&us, (code>>2)&1);
+		status = regs_do(reg_set_notify, &us, (code>>2)&1);
 		break;
 	case WIND_IOCTL_PROT:
 		if (len != sizeof(wind_prot_t))
@@ -329,7 +358,8 @@ NTSTATUS NTAPI ENTRY(driver_entry)(IN PDRIVER_OBJECT self, IN PUNICODE_STRING re
 {
 	PDEVICE_OBJECT dev;
 	NTSTATUS status;
-	RTL_QUERY_REGISTRY_TABLE tab[2] = {{
+	UNICODE_STRING regs[4]={{0}};
+	RTL_QUERY_REGISTRY_TABLE tab[] = {{
 		.Flags = RTL_QUERY_REGISTRY_DIRECT
 			|RTL_QUERY_REGISTRY_TYPECHECK
 			|RTL_QUERY_REGISTRY_REQUIRED
@@ -341,7 +371,32 @@ NTSTATUS NTAPI ENTRY(driver_entry)(IN PDRIVER_OBJECT self, IN PUNICODE_STRING re
 		.EntryContext = &cfg,
 		.DefaultType = (REG_BINARY<<RTL_QUERY_REGISTRY_TYPECHECK_SHIFT)
 			|REG_NONE
-	},{}};
+	},{
+		.Flags = RTL_QUERY_REGISTRY_DIRECT
+			|RTL_QUERY_REGISTRY_TYPECHECK,
+		.DefaultType = (REG_SZ<<RTL_QUERY_REGISTRY_TYPECHECK_SHIFT),
+		.Name = L"RD",
+		.EntryContext = regs,
+	},{
+		.Flags = RTL_QUERY_REGISTRY_DIRECT
+			|RTL_QUERY_REGISTRY_TYPECHECK,
+		.DefaultType = (REG_SZ<<RTL_QUERY_REGISTRY_TYPECHECK_SHIFT),
+		.Name = L"RE",
+		.EntryContext = regs+1,
+	},{
+		.Flags = RTL_QUERY_REGISTRY_DIRECT
+			|RTL_QUERY_REGISTRY_TYPECHECK,
+		.DefaultType = (REG_SZ<<RTL_QUERY_REGISTRY_TYPECHECK_SHIFT),
+		.Name = L"ND",
+		.EntryContext = regs+2,
+	},{
+		.Flags = RTL_QUERY_REGISTRY_DIRECT
+			|RTL_QUERY_REGISTRY_TYPECHECK,
+		.DefaultType = (REG_SZ<<RTL_QUERY_REGISTRY_TYPECHECK_SHIFT),
+		.Name = L"NE",
+		.EntryContext = regs+3,
+	},
+	{}};
 
 	status = RtlQueryRegistryValues(0, reg->Buffer, tab, NULL, NULL);
 	if (!NT_SUCCESS(status)) {
@@ -376,6 +431,14 @@ NTSTATUS NTAPI ENTRY(driver_entry)(IN PDRIVER_OBJECT self, IN PUNICODE_STRING re
 	dev->Flags &= ~DO_DEVICE_INITIALIZING;
 
 	KeInitializeMutex(&ioctl_mutex, 0);
+	KeWaitForMutexObject(&ioctl_mutex, UserRequest, KernelMode, FALSE, NULL);
+	if (cfg.bootreg) {
+		regs_do(reg_set_lock, regs, 0);
+		regs_do(reg_set_lock, regs+1, 1);
+		regs_do(reg_set_notify, regs+2, 0);
+		regs_do(reg_set_notify, regs+3, 1);
+	}
+	KeReleaseMutex(&ioctl_mutex, 0);
 
 	DBG("loaded driver\n");
 	return status;
