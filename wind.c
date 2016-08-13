@@ -564,12 +564,26 @@ static int load_driver(WCHAR *name)
 	wcscpy(svc, SVC_BASE);
 	wcscat(svc, name);
 havesvc:;
-	status = wind_ioctl(dev, WIND_IOCTL_INSMOD, svc, wcslen(svc)*2+2);
+	status = wind_ioctl_string(dev, WIND_IOCTL_INSMOD, svc);
 	if (!NT_SUCCESS(status)) {
+		if (status == STATUS_IMAGE_ALREADY_LOADED) {
+			UNICODE_STRING us;
+			RtlInitUnicodeString(&us, svc);
+			status = NtUnloadDriver(&us);
+			if (!NT_SUCCESS(status)) {
+				printf("Unload failed %08x\n", (int)status);
+			}
+			status = wind_ioctl_string(dev, WIND_IOCTL_INSMOD, svc);
+		}
+		if (NT_SUCCESS(status)) {
+			printf("%S re-loaded.\n", name);
+			goto outok;
+		}
 		printf("Failed to load %S NTSTATUS=%08x", name, (int)status);
 		goto outclose;
 	}
 	printf("%S loaded.", name);
+outok:
 	ret = 1;
 outclose:;
 	wind_close(dev);

@@ -16,7 +16,7 @@
 
 #define RTL_STRING(s) ((UNICODE_STRING){sizeof(s)-sizeof((s)[0]),sizeof(s),(s)})
 
-#define RVA2PTR(base,rva) ((void*)(((PBYTE) base) + rva))
+#define RVA2PTR(base,rva) ((void*)(((PCHAR) base) + rva))
 #define ID_SeLoadDriverPrivilege 10
 #define LUID_SeLoadDriverPrivilege (LUID){ID_SeLoadDriverPrivilege,0}
 
@@ -48,3 +48,9 @@
 #define RTL_QUERY_REGISTRY_TYPECHECK_SHIFT 24
 
 #define WIN7 (cfg.protbit >= 0)
+#define SystemModuleInformation 0xb
+#define SystemBootEnvironmentInformation 0x5a
+#define SystemCodeIntegrityInformation 0x67
+#define SystemSecureBootPolicyInformation 0x8f
+
+
