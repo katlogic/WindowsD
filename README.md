@@ -109,7 +109,7 @@ Windows contains 3 mechanisms to make dealing with registry especially painful:
 Note that all methods work at run time, they are not permanent permission within the registry.
 "Protection" like this, unlike permissions, works only within the currently running session.
 
-WindowsD allows you to override and control both methods.
+WindowsD allows you to override and control all of these methods.
 
 #### Method 1
 Parameters `/RD` and `/RE`:
@@ -145,14 +145,22 @@ Uses parameters `/CD` and `/CE`. There is no registry path to specify (that is s
 to the driver which registered the callback), so we can simply disable and re-enable again all
 hooks present.
 
-### Bugs
+### Bugs / BSODs
 
 The tool depends on many undocumented windows internals, as such, may break
 every windows update. Usually, it will simply refuse to load and you'll see
 all restrictions in effect again. There is a small chance it will render system
 unbootable too, so before installing via `wind /i`, USE the system restore.
 
-If you get a BSOD, open an issue with exact version of windows and build number.
+If you boot your system in safe mode, the driver will refuse to load as well,
+and then you can simply uninstall the service via `/U` or manually:
+
+```
+> sc delete WinD64inject
+```
+
+If you get a BSOD, open an issue with exact version of windows and build number,
+and attach the following files from your system: `CI.DLL`, `NTOSKRNL.EXE`
 
 ### API
 
