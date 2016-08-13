@@ -87,10 +87,12 @@ static ULONG_PTR guess_ci()
 }
 #endif
 
-static int k_analyze(wind_config_t *cfg)
+static int k_analyze(void *mods, wind_config_t *cfg)
 {
 	WCHAR path[PATH_MAX];
+	ULONG_PTR cbhead;
 	HMODULE k;
+	ULONG_PTR base = get_mod_base(mods, "NTOSKRNL.EXE");
        
 	DBG("ntoskrnl?");
 	wcscpy(path + GetSystemDirectory(path, PATH_MAX), L"\\NTOSKRNL.EXE");
@@ -123,6 +125,34 @@ static int k_analyze(wind_config_t *cfg)
 protfound:;
 	cfg->protofs = *((ULONG*)p);
 	DBG("prot done");
+
+	p = (void*)GetProcAddress(k, "CmUnRegisterCallback");
+	if (!p) goto nocb;
+	for (int i = 0; i < 512; i++, p++) { 
+		cbhead = *((DWORD*)p);
+#ifdef _WIN64
+		// lea rcx, cblist; call ..; mov rdi, rax
+		if (p[-3] == 0x48 && p[-2] == 0x8d && p[-1] == 0x0d &&
+			p[4] == 0xe8 && p[9] == 0x48 && p[10] == 0x8b && p[11] == 0xf8) {
+			cbhead = ((ULONG_PTR)p) + 4 + ((LONG)cbhead);
+			goto cbfound;
+		}
+
+#else
+		// mov edi, offset cblist; mov eax, edi; call
+		if (p[-1] == 0xbf && p[4] == 0x8b && p[5] == 0xc7 && p[6] == 0xe8)
+			goto cbfound;
+		// mov esi, offset cblist; push ebx; lea edx...
+		if (p[-1] == 0xbe && p[4] == 0x53 && p[5] == 0x8d && p[6] == 0x55)
+			goto cbfound;
+#endif
+	}
+	DBG("cb scan failed");
+	goto nocb;
+cbfound:;
+	cfg->cblist = (void*)(cbhead - ((ULONG_PTR)k) + base);
+nocb:;
+	DBG("CallbackListHead @ %p", cfg->cblist);
 	FreeLibrary(k);
 	return 1;
 }
@@ -414,7 +444,7 @@ static HANDLE trigger_loader(WCHAR *svc, WCHAR *ldr, int boot)
 	if (!key)
 		goto out;
 
-	k_analyze(&cfg);
+	k_analyze(mod, &cfg);
 
 	DBG("preparing cfg for driver with:\n"
 		" .ci_opt = %p\n"
@@ -751,31 +781,32 @@ static int usage(int interactive)
 {
 	int doit, installed = is_installed();
 
-	for (int n = printf( "WindowsD "VERSTR" kat@lua.cz 2016\n")-1; n; n--)
-		putchar('=');
-	putchar('\n');
-
+	printf( "WindowsD "VERSTR" kat@lua.cz 2016\n\n");
 
 	printf(
-		"This program can disable some restrictions of Windows:\n"
+		"This program can manipulate various restrictions of Windows:\n"
 		" * Driver signing ('DSE', breaks freeware utilities)\n"
 		" * Process protection ('unkillable processes', WinTCB)\n"
-		" * Hard locked registry keys (syscall, malware is the only user)\n"
-		" * Silently locked registry keys (notify, malware is the only user)\n"
+		" * Most common methods of 'read only' registry locking\n"
 		"\n"
 	);
 
 	if (!interactive) {
 		printf("usage: \n"
+"\nDriver actions:\n"
 " "BASENAME " /I                        install, disable DSE permanently\n"
 " "BASENAME " /U                        uninstall, re-enable DSE permanently\n"
+" "BASENAME " /L [service|driver.sys]   load, (or re-load, if present) a driver\n"
+"\nMisc actions:\n"
 " "BASENAME " /W                        run interactive installer\n"
 " "BASENAME " /D <pid>                  de-protect specified PID\n"
-" "BASENAME " /L [service|driver.sys]   load unsigned driver and keep DSE status intact\n"
+"\nRegistry actions:\n"
 " "BASENAME " /RD <\\Registry\\Path>      R/O lock Disable\n"
 " "BASENAME " /RE <\\Registry\\Path>      R/O lock Enable\n"
 " "BASENAME " /ND <\\Registry\\Path>      Notify/refresh Disable\n"
 " "BASENAME " /NE <\\Registry\\Path>      Notify/refresh re-Enable\n"
+" "BASENAME " /CD                       Disable global registry callbacks\n"
+" "BASENAME " /CE                       Enable global registry callbacks\n"
 );
 		goto out;
 	}
@@ -976,8 +1007,10 @@ static int regunlock(int mcmd, WCHAR *p)
 		printf("Failed to open/install WinD device.\n");
 		return 0;
 	}
-
-	if (cmd == 'D') {
+	if (mcmd == 'C') {
+		printf("%sbling global registry callbacks...", cmd=='E'?"Ena":"Disa");
+		status = wind_ioctl(dev, WIND_IOCTL_REGCBOFF+((cmd=='E')<<2), NULL, 0);
+	} else if (cmd == 'D') {
 		printf("Unlocking %S...", p);
 		status = wind_ioctl_string(dev,
 				mcmd=='N'
@@ -1039,6 +1072,7 @@ void ENTRY(win_main)()
 			break;
 		case 'R':
 		case 'N':
+		case 'C':
 			ret = !!regunlock(cc, cmd);
 			break;
 		default:

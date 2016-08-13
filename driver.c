@@ -37,12 +37,6 @@ static NTSTATUS driver_sideload(PUNICODE_STRING svc)
 }
 
 // The rest is just boring driver boilerplate...
-static VOID NTAPI dev_unload(IN PDRIVER_OBJECT self)
-{
-	DBG("unloading!\n");
-	IoDeleteDevice(self->DeviceObject);
-}
-
 static NTSTATUS NTAPI dev_open(IN PDEVICE_OBJECT dev, IN PIRP irp)
 {
 	irp->IoStatus.Status = STATUS_SUCCESS;
@@ -287,6 +281,25 @@ static NTSTATUS change_prot(wind_prot_t *req)
 	return status;
 }
 
+static NTSTATUS regcb_set(int enable)
+{
+	static LIST_ENTRY saved_list;
+	static int cleared = 0;
+	if (!cfg.cblist)
+		return STATUS_NOT_SUPPORTED;
+	if (cleared ^ enable)
+		return STATUS_DEVICE_BUSY;
+	if (!enable) {
+		saved_list = *cfg.cblist;
+		InitializeListHead(cfg.cblist);
+		cleared = 1;
+	} else {
+		*cfg.cblist = saved_list;
+		cleared = 0;
+	}
+	return STATUS_SUCCESS;
+}
+
 static NTSTATUS NTAPI dev_control(IN PDEVICE_OBJECT dev, IN PIRP irp)
 {
 	PIO_STACK_LOCATION io_stack;
@@ -294,7 +307,7 @@ static NTSTATUS NTAPI dev_control(IN PDEVICE_OBJECT dev, IN PIRP irp)
 	NTSTATUS status = STATUS_INVALID_PARAMETER;
 	UNICODE_STRING us;
 	void *buf;
-	int len;
+	int len,onoff;
 
 	KeWaitForMutexObject(&ioctl_mutex, UserRequest, KernelMode, FALSE, NULL);
 
@@ -316,6 +329,10 @@ static NTSTATUS NTAPI dev_control(IN PDEVICE_OBJECT dev, IN PIRP irp)
 	status = STATUS_INVALID_BUFFER_SIZE;
 	DBG("code=%08x\n",(unsigned)code);
 
+	// codes 0x90x and 0x81x need buffer.
+	if ((code & ((0x110)<<2)) && (!buf))
+		goto out;
+
 	// 0x10 marks string argument.
 	if (code & (0x10 << 2)) {
 		// must be at least 2 long, must be even, must terminate with 0
@@ -327,18 +344,18 @@ static NTSTATUS NTAPI dev_control(IN PDEVICE_OBJECT dev, IN PIRP irp)
 		us.MaximumLength = len;
 	}
 
-
+	onoff = (code>>2)&1;
 switch (code) {
 	case WIND_IOCTL_INSMOD:
 		status = driver_sideload(&us);
 		break;
 	case WIND_IOCTL_REGLOCKON:
 	case WIND_IOCTL_REGLOCKOFF:
-		status = regs_do(reg_set_lock, &us, (code>>2)&1);
+		status = regs_do(reg_set_lock, &us, onoff);
 		break;
 	case WIND_IOCTL_REGNON:
 	case WIND_IOCTL_REGNOFF:
-		status = regs_do(reg_set_notify, &us, (code>>2)&1);
+		status = regs_do(reg_set_notify, &us, onoff);
 		break;
 	case WIND_IOCTL_PROT:
 		if (len != sizeof(wind_prot_t))
@@ -346,12 +363,23 @@ switch (code) {
 		status = change_prot(buf);
 		irp->IoStatus.Information = len;
 		break;
+	case WIND_IOCTL_REGCBON:
+	case WIND_IOCTL_REGCBOFF:
+		status = regcb_set(onoff);
+		break;
 }
 out:;
 	KeReleaseMutex(&ioctl_mutex, 0);
 	irp->IoStatus.Status = status;
 	IoCompleteRequest(irp, IO_NO_INCREMENT);
 	return status;
+}
+
+static VOID NTAPI dev_unload(IN PDRIVER_OBJECT self)
+{
+	DBG("unloading!\n");
+	regcb_set(0);
+	IoDeleteDevice(self->DeviceObject);
 }
 
 NTSTATUS NTAPI ENTRY(driver_entry)(IN PDRIVER_OBJECT self, IN PUNICODE_STRING reg)

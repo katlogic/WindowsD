@@ -13,7 +13,11 @@ typedef struct {
 	int 	protofs;   // _EPROCESS->Flags2 offset on Win7, PS_PROTECTION Win8.
 	int 	protbit;   // Flags2->ProtectedProcess bit on Win7, -1 otherwise.
 	int 	bootreg;   // process registry entries at boot
+	LIST_ENTRY *cblist;
 } wind_config_t;
+
+#define WIND_IOCTL_REGCBOFF CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define WIND_IOCTL_REGCBON CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 // Load a driver. Argument is simply the unicode string.
 #define WIND_IOCTL_INSMOD CTL_CODE(FILE_DEVICE_UNKNOWN, 0x810, METHOD_BUFFERED, FILE_ANY_ACCESS)
