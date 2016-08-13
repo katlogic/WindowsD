@@ -12,6 +12,7 @@ typedef struct {
 	UCHAR 	ci_guess;  // If ciorigptr is 0, use this guess instead.
 	int 	protofs;   // _EPROCESS->Flags2 offset on Win7, PS_PROTECTION Win8.
 	int 	protbit;   // Flags2->ProtectedProcess bit on Win7, -1 otherwise.
+	int 	bootreg;   // process registry entries at boot
 } wind_config_t;
 
 // Load a driver. Argument is simply the unicode string.

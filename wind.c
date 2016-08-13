@@ -369,9 +369,9 @@ static int install_files(WCHAR *svc, WCHAR *ldr)
 	return 1;
 }
 
-static HANDLE trigger_loader(WCHAR *svc, WCHAR *ldr)
+static HANDLE trigger_loader(WCHAR *svc, WCHAR *ldr, int boot)
 {
-	wind_config_t cfg = {0};
+	wind_config_t cfg = {.bootreg=boot};
 	NTSTATUS status;
 	UNICODE_STRING svcu, ldru;
 	HANDLE dev = NULL;
@@ -465,7 +465,7 @@ out:;
 	return dev;
 }
 
-static HANDLE check_driver(int force)
+static HANDLE check_driver(int force, int boot)
 {
 	HANDLE dev;
 	dev = wind_open();
@@ -477,7 +477,7 @@ static HANDLE check_driver(int force)
 		WaitForSingleObject(hmutex,INFINITE);
 
 		if (install_files(svc, ldr))
-			dev = trigger_loader(svc, ldr);
+			dev = trigger_loader(svc, ldr, boot);
 
 		ReleaseMutex(hmutex);
 		CloseHandle(hmutex);
@@ -504,7 +504,7 @@ static int unprotect(WCHAR *p)
 		return 0;
 	while (*p == L' ' || *p == L'\t') p++;
 	prot.pid = _wtoi(p);
-	dev = check_driver(0);
+	dev = check_driver(0,0);
 	if (!dev) {
 		printf("Failed to open/install WinD device.\n");
 		return 0;
@@ -530,7 +530,7 @@ static int load_driver(WCHAR *name)
 	if (!elevate())
 		return 0;
 
-       	dev = check_driver(0);
+       	dev = check_driver(0,0);
 	if (!name) {
 		ret = !!dev;
 		goto outclose;
@@ -619,7 +619,7 @@ static int do_install()
 	(void)st;
 	DBG("Unloading previous driver %x", (int)st);
 
-	if (!check_driver(1)) {
+	if (!check_driver(1,0)) {
 		printf("Failed to initialize driver.\n");
 		DBG("no driver, exiting");
 		return 0;
@@ -926,7 +926,7 @@ static int run_service()
 	pid = pbi[5];
 	prot.pid = pid;
 	DBG("got parent pid=%d",pid);
-	dev = check_driver(0);
+	dev = check_driver(0,1);
 	if (!dev) {
 		DBG("no driver, bye");
 		return 0;
@@ -957,7 +957,7 @@ static int regunlock(int mcmd, WCHAR *p)
 	if ((!cmd) || ((cmd != 'E') && (cmd != 'D')))
 		usage(0);
 	while (*p == L' ' || *p == L'\t') p++;
-	dev = check_driver(0);
+	dev = check_driver(0,0);
 	if (!dev) {
 		printf("Failed to open/install WinD device.\n");
 		return 0;
