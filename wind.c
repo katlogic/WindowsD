@@ -87,76 +87,6 @@ static ULONG_PTR guess_ci()
 }
 #endif
 
-static int k_analyze(void *mods, wind_config_t *cfg)
-{
-	WCHAR path[PATH_MAX];
-	ULONG_PTR cbhead;
-	HMODULE k;
-	ULONG_PTR base = get_mod_base(mods, "NTOSKRNL.EXE");
-       
-	DBG("ntoskrnl?");
-	wcscpy(path + GetSystemDirectory(path, PATH_MAX), L"\\NTOSKRNL.EXE");
-	k = LoadLibraryEx(path, NULL, DONT_RESOLVE_DLL_REFERENCES);
-	BYTE *p;
-	if (!k) {
-		DBG("ntoskrnl failed?");
-	       	return 0;
-	}
-	p = (void*)GetProcAddress(k, "PsGetProcessProtection");
-	cfg->protbit = -1;
-	cfg->protofs = 0;
-	if (!p) {
-		cfg->protbit = 11;
-		p = (void*)GetProcAddress(k, "PsIsProtectedProcess");
-		// mov 
-		for (int i = 0; i < 64; i++, p++)
-			// mov eax, [anything + OFFSET]; shr eax, 11
-			if (!memcmp(p+2, "\x00\x00\xc1\xe8\x0b",5))
-				goto protfound;
-	} else {
-		// mov al, [anything+OFFSET]
-		for (int i =0 ; i < 64; i++, p++)
-			if ((p[-2] == 0x8a) && (!p[2] && !p[3]))
-				goto protfound;
-	}
-	DBG("failed to find protbit");
-	FreeLibrary(k);
-	return 0;
-protfound:;
-	cfg->protofs = *((ULONG*)p);
-	DBG("prot done");
-
-	p = (void*)GetProcAddress(k, "CmUnRegisterCallback");
-	if (!p) goto nocb;
-	for (int i = 0; i < 512; i++, p++) { 
-		cbhead = *((DWORD*)p);
-#ifdef _WIN64
-		// lea rcx, cblist; call ..; mov rdi, rax
-		if (p[-3] == 0x48 && p[-2] == 0x8d && p[-1] == 0x0d &&
-			p[4] == 0xe8 && p[9] == 0x48 && p[10] == 0x8b && p[11] == 0xf8) {
-			cbhead = ((ULONG_PTR)p) + 4 + ((LONG)cbhead);
-			goto cbfound;
-		}
-
-#else
-		// mov edi, offset cblist; mov eax, edi; call
-		if (p[-1] == 0xbf && p[4] == 0x8b && p[5] == 0xc7 && p[6] == 0xe8)
-			goto cbfound;
-		// mov esi, offset cblist; push ebx; lea edx...
-		if (p[-1] == 0xbe && p[4] == 0x53 && p[5] == 0x8d && p[6] == 0x55)
-			goto cbfound;
-#endif
-	}
-	DBG("cb scan failed");
-	goto nocb;
-cbfound:;
-	cfg->cblist = (void*)(cbhead - ((ULONG_PTR)k) + base);
-nocb:;
-	DBG("CallbackListHead @ %p", cfg->cblist);
-	FreeLibrary(k);
-	return 1;
-}
-
 static ULONG_PTR ci_analyze(void *mods, wind_config_t *cfg)
 {
 	HMODULE ci;
@@ -444,15 +374,11 @@ static HANDLE trigger_loader(WCHAR *svc, WCHAR *ldr, int boot)
 	if (!key)
 		goto out;
 
-	k_analyze(mod, &cfg);
-
 	DBG("preparing cfg for driver with:\n"
 		" .ci_opt = %p\n"
 		" .ci_orig = %p\n"
 		" .ci_guess = %02x\n"
-		" .protofs = %x\n"
-		" .protbit = %d\n", cfg.ci_opt, cfg.ci_orig, cfg.ci_guess,
-		cfg.protofs, cfg.protbit);
+		, cfg.ci_opt, cfg.ci_orig, cfg.ci_guess);
 
 	RtlWriteRegistryValue(0, svc, L"cfg", REG_BINARY, &cfg, sizeof(cfg));
 
