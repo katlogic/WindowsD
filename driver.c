@@ -9,7 +9,7 @@ static wind_config_t cfg = {(void*)(-(LONG)sizeof(cfg))};
 static KMUTEX ioctl_mutex;
 
 
-
+//
 // What follows is the meat of the whole DSE bypass.
 //
 // We temporarily flip the ci_Options to not validate, load driver, flip
@@ -47,6 +47,7 @@ static NTSTATUS NTAPI dev_open(IN PDEVICE_OBJECT dev, IN PIRP irp)
 	return STATUS_SUCCESS;
 }
 
+// Restore/remove notify of one potential CM_KEY_BODY.
 static int notify_unlock(int lock, CM_KEY_BODY *tkb, CM_KEY_BODY *kb)
 {
 	int ret = 0;
@@ -96,6 +97,16 @@ skipentry:
 	return ret;
 }
 
+static NTSTATUS open_key(HANDLE *h, PUNICODE_STRING name)
+{
+	OBJECT_ATTRIBUTES attr = {
+		.Length = sizeof(attr),
+		.Attributes = OBJ_KERNEL_HANDLE|OBJ_CASE_INSENSITIVE,
+		.ObjectName = name
+	};
+	return ZwOpenKey(h, KEY_READ, &attr);
+}
+
 // Stop/reenable notifications on registry key.
 static NTSTATUS reg_set_notify(PUNICODE_STRING name, int lock)
 {
@@ -116,12 +127,7 @@ static NTSTATUS reg_set_notify(PUNICODE_STRING name, int lock)
 
 	// Spam handles to ensure we'll appear in cbptr->KeyBodyListHead.
 	for (i = 0; i < NSPAM; i++) {
-		OBJECT_ATTRIBUTES attr = {
-			.Length = sizeof(attr),
-			.Attributes = OBJ_KERNEL_HANDLE|OBJ_CASE_INSENSITIVE,
-			.ObjectName = name
-		};
-		st = ZwOpenKey(&harr[i], KEY_READ, &attr);
+		st = open_key(&harr[i], name);
 		if (!NT_SUCCESS(st))
 			goto out_unspam_zwclose;
 	}
@@ -186,17 +192,12 @@ out_unspam_zwclose:
 // Apply/remove hard lock.
 static NTSTATUS reg_set_lock(PUNICODE_STRING name, int lock)
 {
-	OBJECT_ATTRIBUTES attr = {
-		.Length = sizeof(attr),
-		.Attributes = OBJ_KERNEL_HANDLE|OBJ_CASE_INSENSITIVE,
-		.ObjectName = name
-	};
 	HANDLE h;
 	NTSTATUS st;
 	CM_KEY_CONTROL_BLOCK *cb;
 	CM_KEY_BODY *kb;
 
-	st = ZwOpenKey(&h, KEY_READ, &attr);
+	st = open_key(&h, name);
 	if (!NT_SUCCESS(st))
 		return st;
 	st = ObReferenceObjectByHandle(h, KEY_WRITE,
@@ -226,7 +227,8 @@ out:;
 	return st;
 }
 
-static NTSTATUS regs_do(NTSTATUS (*fn)(PUNICODE_STRING,int), PUNICODE_STRING names, int lock)
+static NTSTATUS regs_do(NTSTATUS (*fn)(PUNICODE_STRING,int), PUNICODE_STRING names,
+		int lock)
 {
 	WCHAR *p = names->Buffer;
 	NTSTATUS status = STATUS_SUCCESS;
@@ -300,6 +302,107 @@ static NTSTATUS regcb_set(int enable)
 		cleared = 0;
 	}
 	return STATUS_SUCCESS;
+}
+
+// Helper scratch space for parser.
+typedef struct {
+	wind_pol_ent *ents[WIND_POL_MAX];
+	UCHAR scratch[65536], *p;
+	int nent;
+} parse_t;
+
+// Walk through our custom policies, and patch em up into the system one.
+static NTSTATUS NTAPI parse_policy(WCHAR *name, ULONG typ, void *data, ULONG len,
+		void *pparse, void *unused)
+{
+	parse_t *parse = pparse;
+	wind_pol_ent *e;
+	int i, nlen;
+	if (!name)
+		return STATUS_SUCCESS;
+	nlen = wcslen(name)*2;
+	DBG("Inside parser, %S, typ=%d, nent=%d %p %p %p\n",name,typ,parse->nent,parse,unused,data);
+	// Sane type.
+	if ((typ != REG_SZ) && (typ != REG_BINARY) && (typ != REG_DWORD))
+		return STATUS_SUCCESS;
+	// Find entry of given name
+	for (i = 0; i < parse->nent; i++) {
+		if (parse->ents[i]->name_sz == nlen
+			&& (RtlCompareMemory(parse->ents[i]->name, name, nlen)==nlen)) {
+			DBG("found at index %d\n",i);
+			break;
+		}
+	}
+	// Allocate scratch space
+	e = (void*)parse->p;
+	parse->p += sizeof(*e) + len + nlen;
+	if (parse->p > (parse->scratch + sizeof(parse->scratch)))
+		return STATUS_SUCCESS;
+	// If name not found, allocate new entry.
+	if (i == parse->nent) {
+		e->flags = 0;
+		if (parse->nent == WIND_POL_MAX)
+			return STATUS_SUCCESS;
+		parse->nent++;
+	} else {
+		// Otherwise we'll overwrite previous entry, preserve flags.
+		e->flags = parse->ents[i]->flags;
+	}
+	// Fill in entry. Note that padding (as well as final size)
+	// is done via wind_pol_pack().
+	e->name_sz = nlen;
+	e->type = typ;
+	e->data_sz = len;
+	e->pad0 = 0;
+	memcpy(e->name, name, nlen);
+	memcpy(e->name + nlen, data, len);
+	parse->ents[i] = e;
+	return STATUS_SUCCESS;
+}
+
+// System policy has changed, apply our custom rules.
+static NTAPI void pol_arm_notify(HANDLE key)
+{
+	static WORK_QUEUE_ITEM it;
+	static IO_STATUS_BLOCK io;
+	static struct {
+		KEY_VALUE_PARTIAL_INFORMATION v;
+		UCHAR buf[65536];
+	} vb;
+	static parse_t parse;
+	static UCHAR buf[65536];
+	ULONG got = sizeof(vb);
+
+	// Grab current view of policy and parse its entries.
+	parse.nent = -1;
+	if (NT_SUCCESS(ZwQueryValueKey(key, &RTL_STRING(L""PRODUCT_POLICY),
+			KeyValuePartialInformation, &vb, sizeof(vb), &got)))
+		parse.nent = wind_pol_unpack(vb.v.Data, parse.ents);
+	if (parse.nent >= 0) {
+		RTL_QUERY_REGISTRY_TABLE qt[2] = { {
+			.QueryRoutine = parse_policy,
+			.Name = L""CUSTOM_POLICY,
+			.Flags = RTL_QUERY_REGISTRY_SUBKEY|RTL_QUERY_REGISTRY_NOEXPAND,
+		},{} };
+		// Now filter it through our own "policy".
+		parse.p = parse.scratch;
+		if (NT_SUCCESS(RtlQueryRegistryValues(0, POLICY_PATH, qt, &parse, NULL))) {
+			// If ok, pack it again
+			int len = wind_pol_pack(buf, parse.ents, parse.nent);
+			// And update cache.
+			if (cfg.pExUpdateLicenseData)
+				cfg.pExUpdateLicenseData(len, buf);
+			else if (cfg.pExUpdateLicenseData2)
+				cfg.pExUpdateLicenseData2(len, buf);
+			ZwSetValueKey(key, &RTL_STRING(L""PRODUCT_POLICY), 0, REG_BINARY, buf, len);
+		}
+	}
+	DBG("Re-arming notification\n");
+	memset(&it, 0, sizeof(it));
+	it.WorkerRoutine = pol_arm_notify;
+	it.Parameter = key;
+	ZwNotifyChangeKey(key, NULL, (void*)&it, (void*)1,
+				&io, 5, TRUE, NULL, 0, TRUE);
 }
 
 static NTSTATUS NTAPI dev_control(IN PDEVICE_OBJECT dev, IN PIRP irp)
@@ -380,11 +483,35 @@ out:;
 static VOID NTAPI dev_unload(IN PDRIVER_OBJECT self)
 {
 	DBG("unloading!\n");
+	// Restore callbacks.
 	regcb_set(1);
+	// Nuke our own notify, so that kernel does not call junk.
+	reg_set_notify(&RTL_STRING(POLICY_PATH), 0);
 	IoDeleteDevice(self->DeviceObject);
 }
 
-static void k_analyze()
+static int k_brute()
+{
+	UCHAR *p = MmGetSystemRoutineAddress(&RTL_STRING(L"MmMapViewInSessionSpace"));
+	DBG("marker at %p\n", p);
+	if (!p) return 0;
+	for (int i = 0; i < 256*1024; i++, p--) {
+#ifdef _WIN64
+		if (EQUALS(p + 14,"\x48\x81\xec\xa0\x04\x00\x00") && p[0] == 0x48)
+#else
+		if (EQUALS(p,"\x68\x28\x04\x00\x00\x68"))
+#endif
+		{
+			DBG("ExUpdateLicenseData guessed at %p\n", p);
+			cfg.pExUpdateLicenseData2 = (void*)p;
+			return 1;
+		}
+	}
+	DBG("Even the brute guess failed.\n");
+	return 0;
+}
+
+static int k_analyze()
 {
 	int i;
 	UCHAR *p = (void*)MmGetSystemRoutineAddress(&RTL_STRING(L"PsGetProcessProtection"));
@@ -405,7 +532,7 @@ static void k_analyze()
 				goto protfound;
 	}
 	DBG("failed to find protbit\n");
-	return;
+	return 0;
 protfound:;
 	cfg.protofs = *((ULONG*)p);
 	DBG("prot done");
@@ -432,6 +559,11 @@ protfound:;
 	}
 nocb:;
 	DBG("CallbackListHead @ %p", cfg.cblist);
+	cfg.pExUpdateLicenseData = MmGetSystemRoutineAddress(&RTL_STRING(L"ExUpdateLicenseData"));
+	if (cfg.pExUpdateLicenseData)
+		return 1;
+
+	return k_brute();
 }
 
 
@@ -484,15 +616,6 @@ NTSTATUS NTAPI ENTRY(driver_entry)(IN PDRIVER_OBJECT self, IN PUNICODE_STRING re
 		DBG("registry read failed=%x\n",(unsigned)status);
 		return status;
 	}
-	k_analyze();
-	DBG("initializing driver with:\n"
-		" .ci_opt = %p\n"
-		" .ci_orig = %p\n"
-		" .ci_guess = %02x\n"
-		" .protofs = %x\n"
-		" .protbit = %d\n", cfg.ci_opt, cfg.ci_orig, cfg.ci_guess,
-		cfg.protofs, cfg.protbit);
-
 	self->DriverUnload = dev_unload;
 	self->MajorFunction[IRP_MJ_CREATE] = dev_open;
 	self->MajorFunction[IRP_MJ_DEVICE_CONTROL] = dev_control;
@@ -509,19 +632,36 @@ NTSTATUS NTAPI ENTRY(driver_entry)(IN PDRIVER_OBJECT self, IN PUNICODE_STRING re
 		cfg.ci_guess = *cfg.ci_orig;
 	ci_restore();
 
+	KeInitializeMutex(&ioctl_mutex, 0);
+	KeWaitForMutexObject(&ioctl_mutex, UserRequest, KernelMode, FALSE, NULL);
+
 	dev->Flags |= METHOD_BUFFERED;
 	dev->Flags &= ~DO_DEVICE_INITIALIZING;
 
-	KeInitializeMutex(&ioctl_mutex, 0);
-	KeWaitForMutexObject(&ioctl_mutex, UserRequest, KernelMode, FALSE, NULL);
 	if (cfg.bootreg) {
 		regs_do(reg_set_lock, regs, 0);
 		regs_do(reg_set_lock, regs+1, 1);
 		regs_do(reg_set_notify, regs+2, 0);
 		regs_do(reg_set_notify, regs+3, 1);
 	}
-	KeReleaseMutex(&ioctl_mutex, 0);
 
+	if (k_analyze()) {
+		HANDLE kh;
+		reg_set_notify(&RTL_STRING(POLICY_PATH), 0);
+		if (NT_SUCCESS(open_key(&kh, &RTL_STRING(POLICY_PATH))))
+			pol_arm_notify(kh);
+	}
+
+	DBG("initialized driver with:\n"
+		" .ci_opt = %p\n"
+		" .ci_orig = %p\n"
+		" .ci_guess = %02x\n"
+		" .protofs = %x\n"
+		" .protbit = %d\n", cfg.ci_opt, cfg.ci_orig, cfg.ci_guess,
+		cfg.protofs, cfg.protbit);
+
+	KeReleaseMutex(&ioctl_mutex, 0);
 	DBG("loaded driver\n");
 	return status;
 }
+

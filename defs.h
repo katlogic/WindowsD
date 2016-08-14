@@ -26,9 +26,12 @@
 	"obj.CreateRestorePoint \"%s\", 0, 100\nWScript.Quit 123"
 
 #define POLICY_KEY "System\\CurrentControlSet\\Control\\ProductOptions"
-#define PRODUCT_POLICY L"ProductPolicy"
-#define CUSTOM_POLICY L"CustomPolicy"
+#define PRODUCT_POLICY "ProductPolicy"
+#define CUSTOM_POLICY "CustomPolicy"
+
 #define NT_MACHINE L"\\Registry\\Machine\\"
+
+#define POLICY_PATH NT_MACHINE POLICY_KEY
 #define SVC_BASE NT_MACHINE "System\\CurrentControlSet\\Services\\"
 #define LOAD_ATTEMPTS 8
 
