@@ -19,9 +19,9 @@ all: $(TGT)
 CFLAGS=$(OPT) -municode -Wall -Wno-unused-function
 LIBS=-lkernel32 -lntdll -lmsvcrt
 FFLAGS=-fno-ident -fno-stack-check -fno-stack-protector -mno-stack-arg-probe -fno-asynchronous-unwind-tables -fno-exceptions
-LDFLAGS=-Wl,--enable-stdcall-fixup -nostartfiles -Wl,-e_win_main
-DLDFLAGS=$(LDFLAGS) -shared -Wl,-e_dll_main -nostartfiles -lntdll -nostdlib -lkernel32 -lmsvcrt
-SLDFLAGS=$(LDFLAGS) -shared -Wl,-e_driver_entry -Wl,--subsystem=native -nostartfiles -nostdlib -lntoskrnl
+LDFLAGS=-Wl,--enable-stdcall-fixup -nostartfiles -Wl,-e_win_main -Wl,--exclude-all-symbols
+DLDFLAGS=$(LDFLAGS) -shared -Wl,-e_dll_main -nostartfiles -lntdll -nostdlib -lkernel32 -lmsvcrt -Wl,--exclude-all-symbols
+SLDFLAGS=$(LDFLAGS) -shared -Wl,-e_driver_entry -Wl,--subsystem=native -nostartfiles -nostdlib -lntoskrnl -Wl,--exclude-all-symbols
 VERSTR=v2.2
 
 ifeq ($(DEBUG),)
