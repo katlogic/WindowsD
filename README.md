@@ -7,8 +7,7 @@ mal-features introduced in modern windows versions. Currently, it can disable:
 
 * Driver signing, including WHQL-only locked systems (secureboot tablets).
 * Protected processes (used for DRM, "WinTcb").
-* Read-only registry keys (can flip the bit on/off)
-* "Shadowed" registry keys via notification (can suspend and re-enable the notification)
+* Read-only, "invulnerable" registry keys some software and even windows itself employs
 
 WinD works similiarly to [other tools](https://github.com/hfiref0x/DSEFix) which disable DSE, but is
 designed to be more user friendly and support for more OS/hardware combinations.
@@ -95,7 +94,7 @@ found at Alex's blog:
 
 ### Registry
 
-Windows contains 2 mechanisms to make dealing with registry especially painful:
+Windows contains 3 mechanisms to make dealing with registry especially painful:
 
 1. "Hard R/O lock", an undocumented, but publicly exported system call, `NtLockRegistryKey()`. This will
    make given key read-only, until next reboot. Worse still, there does not need to be even a process or driver
@@ -104,42 +103,64 @@ Windows contains 2 mechanisms to make dealing with registry especially painful:
    listening to notifications about changes to key value. The listener is either a thread, or kernel-resident
    driver. They'll usually silently replace the key back to value they want. No errors are reported, but the key
    cannot be edited.
+3. Global hooks. These can be installed only by kernel drivers, and hook directly to registry operation calls.
+   These are not per-key. Originally designed for AV software, but malware has use for it too.
 
-Note that both methods work at run time, they are not permanent permission within the registry.
+Note that all methods work at run time, they are not permanent permission within the registry.
 "Protection" like this, unlike permissions, works only within the currently running session.
 
-WindowsD allows you to override and control both methods.
+WindowsD allows you to override and control all of these methods.
 
-Method 1 example. Parameters `/RD` and `/RE`:
+#### Method 1
+Parameters `/RD` and `/RE`:
 
 ```
 > wind64 /RE \Registry\Machine\SYSTEM\CurrentControlSet\Control\Services
 ```
-Will very sternly disallow writing to this subtree - no new services can be installed. There does not exist permission to disable this setting (except via `/RD` command), and almost nothing can override it - not even internal kernel APIs.
+Will very sternly disallow writing to this subtree - no new services can be installed. There does
+not exist permission to disable this setting (except via `/RD` command), and almost nothing can
+override it - not even internal kernel APIs.
 
 `/RD` and `/RE` can be issued on any key.
 
-Method 2 example. Parameters `/ND` and `/NE`
+#### Method 2
+Parameters `/ND` and `/NE`
 ```
 > wind64 /ND \Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion\Windows
 ```
-Will disable notifications on this subtree (which contains frequently hijacked autorun, `AppInit_DLLs`). Now you can edit it back to value you want, without something mysterious forcing it back. Finally, you can even protect it with `/RE`.
+Will disable notifications on this subtree (which contains frequently hijacked autorun, `AppInit_DLLs`).
+Now you can edit it back to value you want, without something mysterious forcing it back. Finally, you
+can even protect it with `/RE`.
 
 Note that `/NE` can be issued only on key with notifications previously disabled via `/ND`
 
 All registry paths are NT, not the usualy Win32 ones:
 
-`\HKLM\` becomes `\Registry\Machine\`
-`\HKCU\` becomes `\Registry\User\`
+* `\HKLM\` becomes `\Registry\Machine\`
+* `\HKCU\` becomes `\Registry\User\`
 
-### Bugs
+#### Method 3
+
+Uses parameters `/CD` and `/CE`. There is no registry path to specify (that is specific
+to the driver which registered the callback), so we can simply disable and re-enable again all
+hooks present.
+
+### Bugs / BSODs
 
 The tool depends on many undocumented windows internals, as such, may break
 every windows update. Usually, it will simply refuse to load and you'll see
 all restrictions in effect again. There is a small chance it will render system
 unbootable too, so before installing via `wind /i`, USE the system restore.
 
-If you get a BSOD, open an issue with exact version of windows and build number.
+If you boot your system in safe mode, the driver will refuse to load as well,
+and then you can simply uninstall the service via `/U` or manually:
+
+```
+> sc delete WinD64inject
+```
+
+If you get a BSOD, open an issue with exact version of windows and build number,
+and attach the following files from your system: `CI.DLL`, `NTOSKRNL.EXE`
 
 ### API
 
