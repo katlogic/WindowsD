@@ -25,7 +25,11 @@
 	"set obj=GetObject(\"winmgmts:\\\\.\\root\\default:Systemrestore\")\nobj.Enable(\"\")\n" \
 	"obj.CreateRestorePoint \"%s\", 0, 100\nWScript.Quit 123"
 
-#define SVC_BASE L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\"
+#define POLICY_KEY "System\\CurrentControlSet\\Control\\ProductOptions"
+#define PRODUCT_POLICY L"ProductPolicy"
+#define CUSTOM_POLICY L"CustomPolicy"
+#define NT_MACHINE L"\\Registry\\Machine\\"
+#define SVC_BASE NT_MACHINE "System\\CurrentControlSet\\Services\\"
 #define LOAD_ATTEMPTS 8
 
 #ifndef NDEBUG
@@ -53,4 +57,7 @@
 #define SystemCodeIntegrityInformation 0x67
 #define SystemSecureBootPolicyInformation 0x8f
 
+
+#define WSKIP(p) while (*p == L' ' || *p == L'\t') p++;
+#define EQUALS(a,b) (RtlCompareMemory(a,b,sizeof(b)-1)==(sizeof(b)-1))
 

@@ -120,7 +120,7 @@ static ULONG_PTR ci_analyze(void *mods, wind_config_t *cfg)
 			// Don't eat the security cookie
 #ifdef _WIN64
 			// mov rax, [rip+something]
-			if (!memcmp(t, "\x48\x8b\x05",3))
+			if (!EQUALS(t, "\x48\x8b\x05"))
 				continue;
 #else
 			// mov eax, [something]
@@ -458,7 +458,7 @@ static int unprotect(WCHAR *p)
 	wind_prot_t prot = {0};
 	if (!elevate())
 		return 0;
-	while (*p == L' ' || *p == L'\t') p++;
+	WSKIP(p);
 	prot.pid = _wtoi(p);
 	dev = check_driver(0,0);
 	if (!dev) {
@@ -497,7 +497,7 @@ static int load_driver(WCHAR *name)
 		goto outclose;
 	}
 
-	while (*name == L' ' || *name == L'\t') name++;
+	WSKIP(name);
 
 	if (!*name) {
 		ret = 1;
@@ -711,7 +711,7 @@ static int usage(int interactive)
 
 	printf(
 		"This program can manipulate various restrictions of Windows:\n"
-		" * Driver signing ('DSE', breaks freeware utilities)\n"
+		" * Driver signing ('DSE', which breaks freeware utilities like this one)\n"
 		" * Process protection ('unkillable processes', WinTCB)\n"
 		" * Most common methods of 'read only' registry locking\n"
 		"\n"
@@ -725,14 +725,17 @@ static int usage(int interactive)
 " "BASENAME " /L [service|driver.sys]   load, (or re-load, if present) a driver\n"
 "\nMisc actions:\n"
 " "BASENAME " /W                        run interactive installer\n"
-" "BASENAME " /D <pid>                  de-protect specified PID\n"
+" "BASENAME " /D <pid>                  de-protect specified process ID\n"
 "\nRegistry actions:\n"
 " "BASENAME " /RD <\\Registry\\Path>      R/O lock Disable\n"
 " "BASENAME " /RE <\\Registry\\Path>      R/O lock Enable\n"
 " "BASENAME " /ND <\\Registry\\Path>      Notify/refresh Disable\n"
 " "BASENAME " /NE <\\Registry\\Path>      Notify/refresh re-Enable\n"
 " "BASENAME " /CD                       Disable global registry callbacks\n"
-" "BASENAME " /CE                       Enable global registry callbacks\n"
+" "BASENAME " /CE                       Re-enable global registry callbacks\n\n"
+"  Note that Path has to be NT path, such as the following examples:\n"
+"   \\Registry\\Machine\\System\\CurrentControlSet\\Control\\Services\n"
+"   \\Registry\\User\\Environment\n"
 );
 		goto out;
 	}
@@ -927,7 +930,7 @@ static int regunlock(int mcmd, WCHAR *p)
 	int cmd = toupper(*p++);
 	if ((!cmd) || ((cmd != 'E') && (cmd != 'D')))
 		usage(0);
-	while (*p == L' ' || *p == L'\t') p++;
+	WSKIP(p);
 	dev = check_driver(0,0);
 	if (!dev) {
 		printf("Failed to open/install WinD device.\n");
