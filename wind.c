@@ -120,7 +120,7 @@ static ULONG_PTR ci_analyze(void *mods, wind_config_t *cfg)
 			// Don't eat the security cookie
 #ifdef _WIN64
 			// mov rax, [rip+something]
-			if (!EQUALS(t, "\x48\x8b\x05"))
+			if (EQUALS(t, "\x48\x8b\x05"))
 				continue;
 #else
 			// mov eax, [something]
